@@ -8,6 +8,7 @@ use Elasticsearch\ClientBuilder as ElasticBuilder;
 use Illuminate\Contracts\Container\BindingResolutionException;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Contracts\Foundation\Application as Laravel;
+use Illuminate\Foundation\Application;
 use Illuminate\Log\Logger;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\ServiceProvider;
@@ -58,12 +59,6 @@ class ElasticsearchServiceProvider extends ServiceProvider
             Dispatcher::class
         ));
 
-        // TODO: Remove in next major version
-        /** @noinspection PhpDeprecationInspection */
-        Connection::setConnectionResolver($this->app->make(
-            ConnectionResolverInterface::class
-        ));
-
         // Register the Laravel Scout Engine
         $this->registerScoutEngine();
     }
@@ -92,7 +87,7 @@ class ElasticsearchServiceProvider extends ServiceProvider
             __DIR__ . '/../config/' => config_path(),
         ], 'es.config');
 
-        // Auto configuration with lumen framework.
+        // Autoconfiguration with lumen framework.
         if (
             method_exists($this->app, 'configure') &&
             Str::contains($this->app->version(), 'Lumen')
@@ -101,33 +96,22 @@ class ElasticsearchServiceProvider extends ServiceProvider
         }
     }
 
-    protected function registerScoutEngine(): void
+    /**
+     * @throws LogicException
+     */
+    protected function registerClientFactory(): void
     {
-        // Resolve Laravel Scout engine.
-        if ( ! class_exists(EngineManager::class)) {
-            return;
-        }
+        // Bind our default client factory on the container, so users may
+        // override it if they need to build their client in a specific way
+        $this->app->singleton(
+            ClientFactoryInterface::class,
+            ClientFactory::class
+        );
 
-        try {
-            $this->app
-                ->make(EngineManager::class)
-                ->extend('es', function () {
-                    $connectionName = Config::get('scout.es.connection');
-                    $config = Config::get("es.connections.{$connectionName}");
-                    $elastic = ElasticBuilder
-                        ::create()
-                        ->setHosts($config['servers'])
-                        ->build();
-
-                    return new ScoutEngine(
-                        $elastic,
-                        $config['index']
-                    );
-                });
-        } catch (BindingResolutionException $exception) {
-            // Class is not resolved.
-            // Laravel Scout service provider was not loaded yet.
-        }
+        $this->app->alias(
+            ClientFactoryInterface::class,
+            'es.factory'
+        );
     }
 
     protected function registerCommands(): void
@@ -151,38 +135,6 @@ class ElasticsearchServiceProvider extends ServiceProvider
     }
 
     /**
-     * Bind the Elasticsearch logger.
-     *
-     * @return void
-     */
-    protected function registerLogger(): void
-    {
-        $this->app->bind('es.logger', function ($app) {
-            return new Logger(
-                $app->make('log')->channel(Config::get('es.logger'))
-            );
-        });
-    }
-
-    /**
-     * @throws LogicException
-     */
-    protected function registerClientFactory(): void
-    {
-        // Bind our default client factory on the container, so users may
-        // override it if they need to build their client in a specific way
-        $this->app->singleton(
-            ClientFactoryInterface::class,
-            ClientFactory::class
-        );
-
-        $this->app->alias(
-            ClientFactoryInterface::class,
-            'es.factory'
-        );
-    }
-
-    /**
      * @throws LogicException
      */
     protected function registerConnectionResolver(): void
@@ -191,14 +143,7 @@ class ElasticsearchServiceProvider extends ServiceProvider
         // on the container, so we have a single instance at all times
         $this->app->singleton(
             ConnectionResolverInterface::class,
-
-            /**
-             * @param Laravel|Lumen $app
-             *
-             * @returns ConnectionInterface
-             * @throws BindingResolutionException
-             */
-            function ($app) {
+            function (Laravel|Lumen $app): ConnectionManager {
                 $factory = $app->make(ClientFactoryInterface::class);
 
                 $cache = $app->bound(CacheInterface::class)
@@ -237,22 +182,61 @@ class ElasticsearchServiceProvider extends ServiceProvider
         // Bind the default connection separately
         $this->app->singleton(
             ConnectionInterface::class,
-            /**
-             * @param Laravel|Lumen $app
-             *
-             * @returns ConnectionInterface
-             * @throws BindingResolutionException
-             */
-            function ($app) {
-                return $app
-                    ->make(ConnectionResolverInterface::class)
-                    ->connection();
-            }
+            fn(Laravel|Lumen $app): ConnectionInterface => $app
+                ->make(ConnectionResolverInterface::class)
+                ->connection()
         );
 
         $this->app->alias(
             ConnectionInterface::class,
             'es.connection'
         );
+    }
+
+    /**
+     * Bind the Elasticsearch logger.
+     *
+     * @return void
+     */
+    protected function registerLogger(): void
+    {
+        $channel = Config::get('es.logger');
+
+        if ( ! $channel) {
+            return;
+        }
+
+        $this->app->bind('es.logger', fn(Application $app) => new Logger(
+            $app->make('log')->channel($channel)
+        ));
+    }
+
+    protected function registerScoutEngine(): void
+    {
+        // Resolve Laravel Scout engine.
+        if ( ! class_exists(EngineManager::class)) {
+            return;
+        }
+
+        try {
+            $this->app
+                ->make(EngineManager::class)
+                ->extend('es', function () {
+                    $connectionName = Config::get('scout.es.connection');
+                    $config = Config::get("es.connections.{$connectionName}");
+                    $elastic = ElasticBuilder
+                        ::create()
+                        ->setHosts($config['servers'])
+                        ->build();
+
+                    return new ScoutEngine(
+                        $elastic,
+                        $config['index']
+                    );
+                });
+        } catch (BindingResolutionException) {
+            // Class is not resolved.
+            // Laravel Scout service provider was not loaded yet.
+        }
     }
 }

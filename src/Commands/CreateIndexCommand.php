@@ -1,26 +1,26 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Matchory\Elasticsearch\Commands;
 
 use Illuminate\Console\Command;
-use InvalidArgumentException;
-use Matchory\Elasticsearch\Connection;
-use RuntimeException;
+use Matchory\Elasticsearch\Interfaces\ConnectionResolverInterface;
 
-use function app;
 use function array_keys;
+use function assert;
 use function config;
 use function is_null;
+use function is_string;
 
+/**
+ * Create Index Command
+ *
+ * @bundle Matchory\Elasticsearch
+ * @psalm-suppress PropertyNotSetInConstructor
+ */
 class CreateIndexCommand extends Command
 {
-    /**
-     * The name and signature of the console command.
-     *
-     * @var string
-     */
-    protected $signature = 'es:indices:create {index?}{--connection= : Elasticsearch connection}';
-
     /**
      * The console command description.
      *
@@ -29,30 +29,24 @@ class CreateIndexCommand extends Command
     protected $description = 'Create a new index using defined setting and mapping in config file';
 
     /**
-     * ES object
+     * The name and signature of the console command.
      *
-     * @var Connection
+     * @var string
      */
-    protected $es;
-
-    public function __construct()
-    {
-        parent::__construct();
-
-        $this->es = app("es");
-    }
+    protected $signature = 'es:indices:create {index?}{--connection= : Elasticsearch connection}';
 
     /**
      * Execute the console command.
      *
-     * @throws RuntimeException
-     * @throws InvalidArgumentException
+     * @param ConnectionResolverInterface $resolver
      */
-    public function handle(): void
+    public function handle(ConnectionResolverInterface $resolver): void
     {
-        $connectionName = $this->option("connection") ?: config('es.default');
-        $connection = $this->es->connection($connectionName);
-        $client = $connection->raw();
+        $connectionName = $this->option('connection') ?: config('es.default');
+        assert(is_string($connectionName));
+        $client = $resolver
+            ->connection($connectionName)
+            ->getClient();
 
         /** @var string[] $indices */
         $indices = ! is_null($this->argument('index'))
@@ -74,14 +68,13 @@ class CreateIndexCommand extends Command
                 continue;
             }
 
-            // Create index with settings from config file
-
             $this->info("Creating index: {$index}");
 
+            // Create index with settings from config file
             $client->indices()->create([
                 'index' => $index,
                 'body' => [
-                    "settings" => $config['settings'],
+                    'settings' => $config['settings'],
                 ],
 
             ]);
@@ -93,7 +86,7 @@ class CreateIndexCommand extends Command
                     );
 
                     $client->indices()->updateAliases([
-                        "body" => [
+                        'body' => [
                             'actions' => [
                                 [
                                     'add' => [
@@ -119,7 +112,6 @@ class CreateIndexCommand extends Command
                         'index' => $index,
                         'type' => $type,
                         'body' => $mapping,
-                        "include_type_name" => true,
                     ]);
                 }
             }

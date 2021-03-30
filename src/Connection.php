@@ -6,27 +6,18 @@ namespace Matchory\Elasticsearch;
 
 use BadMethodCallException;
 use Elasticsearch\Client;
-use Elasticsearch\ClientBuilder;
-use Illuminate\Cache\Repository;
-use Illuminate\Contracts\Container\BindingResolutionException;
-use Illuminate\Support\Arr;
-use Illuminate\Support\Facades\App;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Traits\ForwardsCalls;
-use InvalidArgumentException;
-use JetBrains\PhpStorm\Deprecated;
-use Matchory\Elasticsearch\Interfaces\ClientFactoryInterface;
 use Matchory\Elasticsearch\Interfaces\ConnectionInterface;
-use Matchory\Elasticsearch\Interfaces\ConnectionResolverInterface as Resolver;
-use Monolog\Handler\StreamHandler;
-use Monolog\Logger;
 use Psr\SimpleCache\CacheInterface;
+
+use function tap;
 
 /**
  * Connection
- * ==========
  *
- * @package Matchory\Elasticsearch
+ * @template T of \Matchory\Elasticsearch\Model
+ * @implements ConnectionInterface<T>
+ * @package  Matchory\Elasticsearch
  */
 class Connection implements ConnectionInterface
 {
@@ -35,180 +26,88 @@ class Connection implements ConnectionInterface
     private const DEFAULT_LOGGER_NAME = 'elasticsearch';
 
     /**
-     * @var Resolver
-     * @deprecated
-     * @todo remove in next major version
-     */
-    #[Deprecated]
-    private static $resolver;
-
-    /**
-     * Used to hold all connections.
-     *
-     * @var Client[]
-     * @deprecated
-     * @todo remove in next major version
-     */
-    #[Deprecated]
-    protected $clients = [];
-
-    /**
-     * Elasticsearch client instance used for this connection.
-     *
-     * @var Client
-     * @see Connection::getClient()
-     */
-    protected $client;
-
-    /**
-     * Cache instance to be used for this connection. In Laravel applications,
-     * this will be an instance of the Cache Repository, which is the same as
-     * the instance returned from the Cache facade.
-     *
-     * @var CacheInterface|null
-     * @see Repository
-     * @see Cache
-     */
-    protected $cache;
-
-    /**
-     * @var string|null
-     */
-    protected $index;
-
-    /**
      * Creates a new connection
      *
-     * @param Client              $client
-     * @param CacheInterface|null $cache
+     * @param Client              $client Elasticsearch client instance used for this connection.
+     * @param CacheInterface|null $cache  Cache instance to be used for this connection. In Laravel applications, this
+     *                                    will be an instance of the Cache Repository, which is the same as the
+     *                                    instance returned from the Cache facade.
      * @param string|null         $index
      */
     public function __construct(
-        Client $client,
-        ?CacheInterface $cache = null,
-        ?string $index = null
+        private readonly Client $client,
+        private readonly CacheInterface|null $cache = null,
+        private readonly string|null $index = null
     ) {
-        $this->client = $client;
-        $this->index = $index;
-        $this->cache = $cache;
     }
 
     /**
-     * Set the connection resolver instance.
-     *
-     * @param Resolver $resolver
-     *
-     * @return void
-     * @internal
-     * @deprecated
-     * @todo         remove in next major version
-     * @noinspection PhpDeprecationInspection
+     * @inheritDoc
      */
-    #[Deprecated]
-    public static function setConnectionResolver(Resolver $resolver): void
+    public function getCache(): CacheInterface|null
     {
-        static::$resolver = $resolver;
+        return $this->cache;
     }
 
     /**
-     * @param ClientBuilder $clientBuilder
-     * @param array         $config
-     *
-     * @return ClientBuilder
-     * @throws InvalidArgumentException
-     * @deprecated Use the connection manager to create connections instead. It
-     *             provides a simpler way to manage connections. This method
-     *             will be removed in the next major version.
-     * @see        ConnectionManager
+     * @inheritDoc
      */
-    #[Deprecated(reason: 'Use the connection manager to create connections instead.')]
-    public static function configureLogging(
-        ClientBuilder $clientBuilder,
-        array $config
-    ): ClientBuilder {
-        if (Arr::get($config, 'logging.enabled')) {
-            $logger = new Logger(self::DEFAULT_LOGGER_NAME);
-            $logger->pushHandler(new StreamHandler(
-                Arr::get(
-                    $config,
-                    'logging.location'
-                ),
-                (int)Arr::get(
-                    $config,
-                    'logging.level',
-                    Logger::INFO
-                )
-            ));
+    public function getClient(): Client
+    {
+        return $this->client;
+    }
 
-            $clientBuilder->setLogger($logger);
+    /**
+     * @inheritDoc
+     */
+    public function index(string $index): Builder
+    {
+        return $this->newQuery()->index($index);
+    }
+
+    /**
+     * @param array       $parameters
+     * @param string|null $index
+     *
+     * @return array{
+     *     _shards: array{
+     *         total: int,
+     *         failed: int,
+     *         successful: int
+     *     },
+     *     _index: string,
+     *     _id: string,
+     *     _version: int,
+     *     _seq_no: int,
+     *     _primary_term: int,
+     *     result: string
+     * }
+     */
+    public function insert(
+        array $parameters,
+        string|null $index = null
+    ): array {
+        if (
+            ! isset($parameters['index']) &&
+            $index = $index ?? $this->index
+        ) {
+            $parameters['index'] = $index;
         }
 
-        return $clientBuilder;
+        return $this->client->index($parameters);
     }
 
     /**
-     * Create a native connection suitable for any non-laravel or non-lumen apps
-     * any composer based frameworks
+     * Route the request to the query class
      *
-     * @param $config
-     *
-     * @return Query
-     * @throws BindingResolutionException
-     * @deprecated Use the connection manager to create connections instead. It
-     *             provides a simpler way to manage connections. This method
-     *             will be removed in the next major version.
-     * @see        ConnectionManager
+     * @return Builder<T>
      */
-    #[Deprecated(reason: 'Use the connection manager to create connections instead.')]
-    public static function create($config): Query
+    public function newQuery(): Builder
     {
-        $app = App::getFacadeApplication();
-        $client = $app
-            ->make(ClientFactoryInterface::class)
-            ->createClient(
-                $config['servers'],
-                $config['handler'] ?? null
-            );
-
-        return (new static(
-            $client,
-            $config['index'] ?? null
-        ))->newQuery();
-    }
-
-    /**
-     * Create a connection for laravel or lumen frameworks
-     *
-     * @param string $name
-     *
-     * @return Query
-     * @deprecated Use the connection manager to create connections instead. It
-     *             provides a simpler way to manage connections. This method
-     *             will be removed in the next major version.
-     * @see        ConnectionManager
-     */
-    #[Deprecated(reason: 'Use the connection manager to create connections instead.')]
-    public function connection(string $name): Query
-    {
-        return $this->newQuery($name);
-    }
-
-    /**
-     * Check if the connection is already loaded
-     *
-     * @param string $name
-     *
-     * @return bool
-     * @deprecated   Use the connection manager to create connections instead. It
-     *             provides a simpler way to manage connections. This method
-     *             will be removed in the next major version.
-     * @see          ConnectionManager
-     * @noinspection PhpDeprecationInspection
-     */
-    #[Deprecated(reason: 'Use the connection manager to create connections instead.')]
-    public function isLoaded(string $name): bool
-    {
-        return (bool)static::$resolver->connection($name);
+        return tap(
+            new Builder($this),
+            fn(Builder $builder) => $builder->index($this->index)
+        );
     }
 
     /**
@@ -227,74 +126,5 @@ class Connection implements ConnectionInterface
             $name,
             $arguments
         );
-    }
-
-    /**
-     * @inheritDoc
-     */
-    public function getCache(): ?CacheInterface
-    {
-        return $this->cache;
-    }
-
-    /**
-     * @inheritDoc
-     */
-    public function getClient(): Client
-    {
-        return $this->client;
-    }
-
-    /**
-     * @inheritDoc
-     */
-    public function index(string $index): Query
-    {
-        return $this->newQuery()->index($index);
-    }
-
-    public function insert(
-        array $parameters,
-        ?string $index = null,
-        ?string $type = null
-    ): object {
-        if (
-            ! isset($parameters[Query::PARAM_INDEX]) &&
-            $index = $index ?? $this->index
-        ) {
-            $parameters[Query::PARAM_INDEX] = $index;
-        }
-
-        if ($type) {
-            $parameters[Query::PARAM_TYPE] = $type;
-        }
-
-        return (object)$this->client->index($parameters);
-    }
-
-    /**
-     * Route the request to the query class
-     *
-     * @param string|null $connection Deprecated parameter: Use the proper
-     *                                connection instance directly instead of
-     *                                passing the name. This parameter will be
-     *                                removed in the next major version.
-     *
-     * @return Query
-     */
-    public function newQuery(?string $connection = null): Query
-    {
-        // TODO: This is deprecated behaviour and should be removed in the next
-        //       major version.
-        if ($connection) {
-            /** @noinspection PhpDeprecationInspection */
-            return static::$resolver
-                ->connection($connection)
-                ->newQuery();
-        }
-
-        $query = new Query($this);
-
-        return $query->index($this->index);
     }
 }

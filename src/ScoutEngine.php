@@ -1,42 +1,39 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Matchory\Elasticsearch;
 
-use Elasticsearch\Client as Elastic;
+use Elasticsearch\Client;
 use Illuminate\Database\Eloquent\Collection;
-use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\InvalidCastException;
 use Laravel\Scout\Builder;
 use Laravel\Scout\Engines\Engine;
+use Psr\SimpleCache\InvalidArgumentException;
 
 use function array_filter;
 use function array_merge;
 use function collect;
 use function count;
+use function is_array;
 
 class ScoutEngine extends Engine
 {
     /**
-     * Index where the models will be saved.
-     *
-     * @var string
-     */
-    protected $index;
-
-    /**
-     * @var Elastic
-     */
-    protected $elastic;
-
-    /**
      * ScoutEngine constructor.
      *
-     * @param Elastic $elastic
-     * @param string  $index
+     * @param Client $client Elasticsearch client
+     * @param string $index  Index where the models will be saved
      */
-    public function __construct(Elastic $elastic, string $index)
+    public function __construct(
+        private readonly Client $client,
+        private readonly string $index
+    ) {
+    }
+
+    public function createIndex($name, array $options = [])
     {
-        $this->elastic = $elastic;
-        $this->index = $index;
+        // TODO: Implement createIndex() method.
     }
 
     /**
@@ -45,6 +42,7 @@ class ScoutEngine extends Engine
      * @param Collection $models
      *
      * @return void
+     * @throws InvalidCastException
      */
     public function delete($models): void
     {
@@ -57,16 +55,20 @@ class ScoutEngine extends Engine
                 'delete' => [
                     '_id' => $model->getKey(),
                     '_index' => $this->index,
-                    '_type' => $model->searchableAs(),
                 ],
             ];
         });
 
-        $this->elastic->bulk($params);
+        $this->client->bulk($params);
+    }
+
+    public function deleteIndex($name)
+    {
+        // TODO: Implement deleteIndex() method.
     }
 
     /**
-     * Flush all of the model's records from the engine.
+     * Flush all the model's records from the engine.
      *
      * @param Model $model
      *
@@ -75,7 +77,7 @@ class ScoutEngine extends Engine
     public function flush($model): void
     {
         /** @noinspection PhpUndefinedMethodInspection */
-        $this->elastic->deleteByQuery([
+        $this->client->deleteByQuery([
             'type' => $model->searchableAs(),
             'index' => $this->index,
             'body' => [
@@ -95,7 +97,14 @@ class ScoutEngine extends Engine
      */
     public function getTotalCount($results): int
     {
-        return $results['hits']['total'];
+        return (int)(is_array($results['hits']['total'])
+            ? $results['hits']['total']['value']
+            : $results['hits']['total']);
+    }
+
+    public function lazyMap(Builder $builder, $results, $model)
+    {
+        // TODO: Implement lazyMap() method.
     }
 
     /**
@@ -106,6 +115,7 @@ class ScoutEngine extends Engine
      * @param Model   $model
      *
      * @return Collection
+     * @throws InvalidArgumentException
      */
     public function map(Builder $builder, $results, $model): Collection
     {
@@ -114,22 +124,19 @@ class ScoutEngine extends Engine
         }
 
         $keys = collect($results['hits']['hits'])
-            ->pluck('_id')
+            ->pluck(Model::FIELD_ID)
             ->values()
             ->all();
 
         $models = $model
-            ->whereIn($model->getKeyName(), $keys)
+            ->newQuery()
+            ->whereIn(Model::FIELD_ID, $keys)
             ->get()
-            ->keyBy($model->getKeyName());
+            ->keyBy(Model::FIELD_ID);
 
-        $collection = new Collection($results['hits']['hits']);
-
-        return $collection->map(static function (
-            array $hit
-        ) use ($models) {
-            return $models[$hit['_id']];
-        });
+        return Collection
+            ::make($results['hits']['hits'])
+            ->map(static fn(array $hit) => $models[$hit[Model::FIELD_ID]]);
     }
 
     /**
@@ -149,9 +156,9 @@ class ScoutEngine extends Engine
      * @param int     $perPage
      * @param int     $page
      *
-     * @return mixed
+     * @return array|callable
      */
-    public function paginate(Builder $builder, $perPage, $page)
+    public function paginate(Builder $builder, $perPage, $page): array|callable
     {
         $result = $this->performSearch($builder, [
             'numericFilters' => $this->filters($builder),
@@ -169,9 +176,9 @@ class ScoutEngine extends Engine
      *
      * @param Builder $builder
      *
-     * @return mixed
+     * @return array|callable
      */
-    public function search(Builder $builder)
+    public function search(Builder $builder): array|callable
     {
         return $this->performSearch($builder, array_filter([
             'numericFilters' => $this->filters($builder),
@@ -185,6 +192,7 @@ class ScoutEngine extends Engine
      * @param Collection $models
      *
      * @return void
+     * @throws InvalidCastException
      */
     public function update($models): void
     {
@@ -195,9 +203,8 @@ class ScoutEngine extends Engine
         $models->each(function (Model $model) use (&$params) {
             $params['body'][] = [
                 'update' => [
-                    '_id' => $model->getKey(),
+                    Model::FIELD_ID => $model->getKey(),
                     '_index' => $this->index,
-                    '_type' => $model->searchableAs(),
                 ],
             ];
 
@@ -207,7 +214,25 @@ class ScoutEngine extends Engine
             ];
         });
 
-        $this->elastic->bulk($params);
+        $this->client->bulk($params);
+    }
+
+    /**
+     * Get the filter array for the query.
+     *
+     * @param Builder $builder
+     *
+     * @return array
+     */
+    protected function filters(Builder $builder): array
+    {
+        return Collection
+            ::make($builder->wheres)
+            ->map(static fn(mixed $value, int|string $key): array => [
+                'match_phrase' => [$key => $value],
+            ])
+            ->values()
+            ->all();
     }
 
     /**
@@ -216,10 +241,12 @@ class ScoutEngine extends Engine
      * @param Builder $builder
      * @param array   $options
      *
-     * @return mixed
+     * @return array|callable
      */
-    protected function performSearch(Builder $builder, array $options = [])
-    {
+    protected function performSearch(
+        Builder $builder,
+        array $options = []
+    ): array|callable {
         /** @noinspection PhpUndefinedMethodInspection */
         $params = [
             'index' => $this->index,
@@ -257,30 +284,6 @@ class ScoutEngine extends Engine
             );
         }
 
-        return $this->elastic->search($params);
-    }
-
-    /**
-     * Get the filter array for the query.
-     *
-     * @param Builder $builder
-     *
-     * @return array
-     */
-    protected function filters(Builder $builder): array
-    {
-        return collect($builder->wheres)
-            ->map(
-            /**
-             * @param mixed      $value
-             * @param string|int $key
-             *
-             * @return array
-             */
-                static function ($value, $key): array {
-                    return ['match_phrase' => [$key => $value]];
-                })
-            ->values()
-            ->all();
+        return $this->client->search($params);
     }
 }

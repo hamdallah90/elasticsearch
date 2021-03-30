@@ -20,65 +20,25 @@ use SebastianBergmann\RecursionContext\InvalidArgumentException;
 
 class ConnectionManagerTest extends TestCase
 {
-    public function testCreatesInstance(): void
-    {
-        $instance = new ConnectionManager(
-            [],
-            new ClientFactory()
-        );
-
-        self::assertInstanceOf(ConnectionManager::class, $instance);
-        self::assertInstanceOf(ConnectionResolverInterface::class, $instance);
-    }
-
-    public function testSetsDefaultConnection(): void
-    {
-        $instance = new ConnectionManager(
-            [],
-            new ClientFactory()
-        );
-
-        self::assertEmpty($instance->getDefaultConnection());
-
-        $instance->setDefaultConnection('foo');
-
-        self::assertSame('foo', $instance->getDefaultConnection());
-    }
-
     /**
-     *
+     * @throws ExpectationFailedException
+     * @throws InvalidArgumentException
      * @noinspection PhpParamsInspection
      */
-    public function testResolvesDefaultConnectionIfNameNotSpecified(): void
+    public function testAddsConnection(): void
     {
         $instance = new ConnectionManager(
             [],
             new ClientFactory()
         );
-        $connection = $this->mock(ConnectionInterface::class);
-        $instance->addConnection('', $connection);
 
-        self::assertSame($connection, $instance->connection());
-    }
+        self::assertFalse($instance->hasConnection('foo'));
 
-    /**
-     *
-     * @noinspection PhpParamsInspection
-     */
-    public function testResolvesConnectionsByName(): void
-    {
-        $manager = new ConnectionManager(
-            [],
-            new ClientFactory()
-        );
-        $c1 = $this->mock(ConnectionInterface::class);
-        $c2 = $this->mock(ConnectionInterface::class);
+        $instance->addConnection('foo', $this->mock(
+            ConnectionInterface::class
+        ));
 
-        $manager->addConnection('foo', $c1);
-        $manager->addConnection('bar', $c2);
-
-        self::assertSame($c1, $manager->connection('foo'));
-        self::assertSame($c2, $manager->connection('bar'));
+        self::assertTrue($instance->hasConnection('foo'));
     }
 
     public function testCreatesConnectionsWithCacheInstance(): void
@@ -103,6 +63,11 @@ class ConnectionManagerTest extends TestCase
         self::assertSame($cache, $connection->getCache());
     }
 
+    /**
+     *
+     * @noinspection PhpParamsInspection
+     */
+
     public function testCreatesConnectionsWithLoggerInstance(): void
     {
         /** @var LoggerInterface&Mock $logger */
@@ -120,8 +85,8 @@ class ConnectionManagerTest extends TestCase
 
             public function createClient(
                 array $hosts,
-                ?LoggerInterface $logger = null,
-                ?callable $handler = null
+                LoggerInterface|null $logger = null,
+                callable|null $handler = null
             ): Client {
                 $callback = $this->callback;
                 $callback($logger);
@@ -147,28 +112,23 @@ class ConnectionManagerTest extends TestCase
     }
 
     /**
-     * @throws ExpectationFailedException
-     * @throws InvalidArgumentException
+     *
      * @noinspection PhpParamsInspection
      */
-    public function testAddsConnection(): void
+
+    public function testCreatesInstance(): void
     {
         $instance = new ConnectionManager(
             [],
             new ClientFactory()
         );
 
-        self::assertFalse($instance->hasConnection('foo'));
-
-        $instance->addConnection('foo', $this->mock(
-            ConnectionInterface::class
-        ));
-
-        self::assertTrue($instance->hasConnection('foo'));
+        self::assertInstanceOf(ConnectionManager::class, $instance);
+        self::assertInstanceOf(ConnectionResolverInterface::class, $instance);
     }
 
-    /** @noinspection PhpUndefinedMethodInspection
-     * @noinspection PhpUnusedParameterInspection
+    /**
+     * @noinspection PhpUndefinedMethodInspection
      */
     public function testProxiesCallsToDefaultConnection(): void
     {
@@ -193,5 +153,50 @@ class ConnectionManagerTest extends TestCase
 
         $manager->addConnection('', $connection);
         $manager->test($expected);
+    }
+
+    public function testResolvesConnectionsByName(): void
+    {
+        $manager = new ConnectionManager(
+            [],
+            new ClientFactory()
+        );
+        /** @var ConnectionInterface $c1 */
+        $c1 = $this->mock(ConnectionInterface::class);
+        /** @var ConnectionInterface $c2 */
+        $c2 = $this->mock(ConnectionInterface::class);
+
+        $manager->addConnection('foo', $c1);
+        $manager->addConnection('bar', $c2);
+
+        self::assertSame($c1, $manager->connection('foo'));
+        self::assertSame($c2, $manager->connection('bar'));
+    }
+
+    public function testResolvesDefaultConnectionIfNameNotSpecified(): void
+    {
+        $instance = new ConnectionManager(
+            [],
+            new ClientFactory()
+        );
+        /** @var ConnectionInterface $connection */
+        $connection = $this->mock(ConnectionInterface::class);
+        $instance->addConnection('', $connection);
+
+        self::assertSame($connection, $instance->connection());
+    }
+
+    public function testSetsDefaultConnection(): void
+    {
+        $instance = new ConnectionManager(
+            [],
+            new ClientFactory()
+        );
+
+        self::assertEmpty($instance->getDefaultConnection());
+
+        $instance->setDefaultConnection('foo');
+
+        self::assertSame('foo', $instance->getDefaultConnection());
     }
 }

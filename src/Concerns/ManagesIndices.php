@@ -5,98 +5,91 @@ declare(strict_types=1);
 namespace Matchory\Elasticsearch\Concerns;
 
 use Matchory\Elasticsearch\Index;
+use Matchory\Elasticsearch\Interfaces\ConnectionInterface;
 use RuntimeException;
 
 trait ManagesIndices
 {
     /**
-     * Create a new index
+     * Retrieves the connection instance.
      *
-     * @param string        $name
+     * @return ConnectionInterface
+     */
+    abstract public function getConnection(): ConnectionInterface;
+
+    /**
+     * Retrieves the index name.
+     *
+     * @return string|null
+     */
+    abstract public function getIndex(): string|null;
+
+    /**
+     * Creates the index of the current model instance, or the index specified
+     * as the name parameter.
+     *
+     * @param string|null   $name
      * @param callable|null $callback
      *
      * @return array
+     * @throws RuntimeException
      */
-    public function createIndex(string $name, ?callable $callback = null): array
-    {
-        $index = new Index($name, $callback);
+    public function createIndex(
+        string|null $name = null,
+        callable|null $callback = null
+    ): array {
+        $name = $name ?: $this->getIndex();
 
-        $index->setConnection($this->getConnection());
+        if ( ! $name) {
+            throw new RuntimeException('No index configured');
+        }
+
+        $index = new Index($this->getConnection(), $name);
+
+        if ($callback) {
+            $callback($index, $this);
+        }
 
         return $index->create();
     }
 
     /**
-     * Create the configured index
+     * Drops the index of the current model instance, or the index specified as
+     * the name parameter.
      *
-     * @param callable|null $callback
+     * @param string|null $name
      *
-     * @return array
      * @throws RuntimeException
-     * @see Query::createIndex()
      */
-    public function create(?callable $callback = null): array
+    public function dropIndex(string|null $name = null): void
     {
-        $index = $this->getIndex();
+        $name = $name ?: $this->getIndex();
 
-        if ( ! $index) {
-            throw new RuntimeException('No index configured');
+        if ( ! $name) {
+            throw new RuntimeException('No index name configured');
         }
 
-        return $this->createIndex($index, $callback);
+        $index = new Index($this->getConnection(), $name);
+        $index->drop();
     }
 
     /**
-     * Check existence of index
+     * Checks whether an index exists.
+     *
+     * @param string|null $name
      *
      * @return bool
      * @throws RuntimeException
      */
-    public function exists(): bool
+    public function indexExists(string|null $name = null): bool
     {
-        $index = $this->getIndex();
+        $name = $name ?: $this->getIndex();
 
-        if ( ! $index) {
+        if ( ! $name) {
             throw new RuntimeException('No index configured');
         }
 
-        $index = new Index($index);
-
-        $index->setConnection($this->getConnection());
-
-        return $index->exists();
-    }
-
-    /**
-     * Drop index
-     *
-     * @param string $name
-     *
-     * @return array
-     */
-    public function dropIndex(string $name): array
-    {
-        $index = new Index($name);
-
-        $index->connection = $this->getConnection();
-
-        return $index->drop();
-    }
-
-    /**
-     * Drop the configured index
-     *
-     * @return array
-     * @throws RuntimeException
-     */
-    public function drop(): array
-    {
-        $index = $this->getIndex();
-
-        if ( ! $index) {
-            throw new RuntimeException('No index name configured');
-        }
-
-        return $this->dropIndex($index);
+        return (new Index($this->getConnection(), $name))
+            ->exists();
     }
 }

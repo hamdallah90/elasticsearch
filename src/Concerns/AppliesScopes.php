@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace Matchory\Elasticsearch\Concerns;
 
+use BadMethodCallException;
 use Closure;
 use Illuminate\Support\Arr;
+use Matchory\Elasticsearch\Builder;
 use Matchory\Elasticsearch\Interfaces\ScopeInterface;
-use Matchory\Elasticsearch\Query;
+use Matchory\Elasticsearch\Model;
 
 use function array_keys;
 use function array_unshift;
@@ -25,19 +27,23 @@ trait AppliesScopes
      *
      * @var array<array-key, string>
      */
-    protected $removedScopes;
+    protected array $removedScopes = [];
 
     /**
      * Holds all scopes applied to the query.
      *
      * @var array<string, Closure|ScopeInterface>
      */
-    protected $scopes;
+    protected array $scopes = [];
+
+    abstract public function getModel(): Model|null;
 
     /**
      * Apply the scopes to the Elasticsearch query instance and return it.
      *
      * @return $this
+     * @internal The library will call this method before invoking the query
+     *           automatically - you should not need to call it manually.
      */
     public function applyScopes(): self
     {
@@ -52,7 +58,7 @@ trait AppliesScopes
                 continue;
             }
 
-            $query->callScope(function (Query $query) use ($scope) {
+            $query->callScope(function (Builder $query) use ($scope) {
                 // If the scope is a Closure we will just go ahead and call the
                 // scope with the builder instance.
                 if ($scope instanceof Closure) {
@@ -97,11 +103,12 @@ trait AppliesScopes
     /**
      * Call the given local model scopes.
      *
-     * @param array|string $scopes
+     * @param array<string|int, array|string>|string $scopes Scopes to call.
      *
      * @return $this
+     * @throws BadMethodCallException
      */
-    public function scopes($scopes): self
+    public function scopes(array|string $scopes): self
     {
         $query = $this;
 
@@ -131,12 +138,14 @@ trait AppliesScopes
      * Register a new global scope.
      *
      * @param string                 $identifier
-     * @param ScopeInterface|Closure $scope
+     * @param Closure|ScopeInterface $scope
      *
      * @return $this
      */
-    public function withGlobalScope(string $identifier, $scope): self
-    {
+    public function withGlobalScope(
+        string $identifier,
+        ScopeInterface|Closure $scope
+    ): self {
         $this->scopes[$identifier] = $scope;
 
         if (method_exists($scope, 'extend')) {
@@ -149,11 +158,11 @@ trait AppliesScopes
     /**
      * Remove a registered global scope.
      *
-     * @param ScopeInterface|string $scope
+     * @param string|ScopeInterface $scope
      *
      * @return $this
      */
-    public function withoutGlobalScope($scope): self
+    public function withoutGlobalScope(ScopeInterface|string $scope): self
     {
         if ( ! is_string($scope)) {
             $scope = get_class($scope);
@@ -169,7 +178,7 @@ trait AppliesScopes
     /**
      * Remove all or passed registered global scopes.
      *
-     * @param ScopeInterface[]|null $scopes
+     * @param array<string|ScopeInterface>|null $scopes
      *
      * @return $this
      */
@@ -193,6 +202,7 @@ trait AppliesScopes
      * @param array  $parameters
      *
      * @return $this
+     * @throws BadMethodCallException
      */
     protected function callNamedScope(
         string $scope,

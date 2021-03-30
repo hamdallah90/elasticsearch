@@ -1,14 +1,16 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Matchory\Elasticsearch\Commands;
 
 use Illuminate\Console\Command;
 use InvalidArgumentException;
 use JsonException;
-use Matchory\Elasticsearch\Connection;
+use Matchory\Elasticsearch\Index;
+use Matchory\Elasticsearch\Interfaces\ConnectionResolverInterface;
 use RuntimeException;
 
-use function app;
 use function array_key_exists;
 use function ceil;
 use function config;
@@ -16,12 +18,34 @@ use function count;
 use function json_encode;
 
 /**
- * Class ReindexCommand
+ * Reindex Command
  *
- * @package Matchory\Elasticsearch\Commands
+ * @bundle         Matchory\Elasticsearch
+ * @psalm-suppress PropertyNotSetInConstructor
  */
 class ReindexCommand extends Command
 {
+    /**
+     * ES connection name
+     *
+     * @var string
+     */
+    protected string $connectionName;
+
+    /**
+     * The console command description.
+     *
+     * @var string
+     */
+    protected $description = 'Reindex indices data';
+
+    /**
+     * Scroll time
+     *
+     * @var string
+     */
+    protected string $scroll;
+
     /**
      * The name and signature of the console command.
      *
@@ -35,71 +59,42 @@ class ReindexCommand extends Command
                             {--connection= : Elasticsearch connection}';
 
     /**
-     * The console command description.
-     *
-     * @var string
-     */
-    protected $description = 'Reindex indices data';
-
-    /**
-     * ES connection name
-     *
-     * @var string
-     */
-    protected $connection;
-
-    /**
-     * ES object
-     *
-     * @var Connection
-     */
-    protected $es;
-
-    /**
      * Query bulk size
      *
      * @var integer
      */
-    protected $size;
+    protected int $size;
 
-    /**
-     * Scroll time
-     *
-     * @var string
-     */
-    protected $scroll;
-
-    /**
-     * ReindexCommand constructor.
-     */
-    public function __construct()
-    {
-        parent::__construct();
-        $this->es = app("es");
-    }
+    private ConnectionResolverInterface $resolver;
 
     /**
      * Execute the console command.
      *
+     * @param ConnectionResolverInterface $resolver
+     *
      * @return void
      * @throws InvalidArgumentException
-     * @throws RuntimeException
      * @throws JsonException
-     * @psalm-suppress PossiblyInvalidArgument
+     * @throws RuntimeException
+     * @throws \Psr\SimpleCache\InvalidArgumentException
      */
-    public function handle(): void
+    public function handle(ConnectionResolverInterface $resolver): void
     {
-        $this->connection = $this->option("connection") ?: config('es.default');
-        $this->size = (int)$this->option("bulk-size");
-        $this->scroll = (string)$this->option("scroll");
+        $this->resolver = $resolver;
+        $this->connectionName = $this->option('connection') ?: config('es.default');
+        $connection = $resolver->connection($this->connectionName);
+        $this->size = (int)$this->option('bulk-size');
+        $this->scroll = $this->option('scroll');
 
         if ($this->size <= 0) {
-            $this->warn("Invalid size value");
+            $this->warn('Invalid size value');
 
             return;
         }
 
-        $originalIndex = (string)$this->argument('index');
+        /** @var string $originalIndex */
+        $originalIndex = $this->argument('index');
+        /** @var string $newIndex */
         $newIndex = $this->argument('new_index');
 
         if ( ! array_key_exists($originalIndex, config('es.indices'))) {
@@ -114,81 +109,77 @@ class ReindexCommand extends Command
             return;
         }
 
-        $this->migrate($originalIndex, $newIndex);
+        $old = new Index($connection, $originalIndex);
+        $new = new Index($connection, $newIndex);
+
+        $this->migrate($old, $new);
     }
 
     /**
      * Migrate data with Scroll queries & Bulk API
      *
-     * @param string      $originalIndex
-     * @param string      $newIndex
+     * @param Index       $originalIndex
+     * @param Index       $newIndex
      * @param string|null $scrollId
      * @param int         $errors
      * @param int         $page
      *
      * @throws InvalidArgumentException
-     * @throws RuntimeException
      * @throws JsonException
+     * @throws RuntimeException
+     * @throws \Psr\SimpleCache\InvalidArgumentException
      */
     public function migrate(
-        string $originalIndex,
-        string $newIndex,
-        ?string $scrollId = null,
+        Index $originalIndex,
+        Index $newIndex,
+        string|null $scrollId = null,
         int $errors = 0,
         int $page = 1
     ): void {
-        $connection = $this->es->connection($this->connection);
+        $connection = $this->resolver->connection($this->connectionName);
 
         if ($page === 1) {
-            $pages = (int)ceil(
-                $connection
-                    ->index($originalIndex)
-                    ->count() / $this->size
-            );
+            $pages = (int)ceil($originalIndex->count() / $this->size);
 
             $this->output->progressStart($pages);
 
-            $documents = $connection
-                ->index($originalIndex)
-                ->type('')
+            $response = $connection
+                ->index($originalIndex->getName())
                 ->scroll($this->scroll)
                 ->take($this->size)
                 ->performSearch();
         } else {
-            $documents = $connection
-                ->index($originalIndex)
-                ->type('')
+            $response = $connection
+                ->index($originalIndex->getName())
                 ->scroll($this->scroll)
                 ->scrollID($scrollId ?: '')
                 ->performSearch();
         }
 
-        if (
-            isset($documents['hits']['hits']) &&
-            count($documents['hits']['hits'])
-        ) {
-            $data = $documents['hits']['hits'];
+        $documents = $response['hits']['hits'] ?? [];
+
+        if (count($documents) > 0) {
             $params = [];
 
-            foreach ($data as $row) {
+            foreach ($documents as $document) {
                 $params['body'][] = [
-
                     'index' => [
                         '_index' => $newIndex,
-                        '_type' => $row['_type'],
-                        '_id' => $row['_id'],
+                        '_id' => $document['_id'],
                     ],
-
                 ];
 
-                $params['body'][] = $row['_source'];
+                $params['body'][] = $document['_source'];
             }
 
-            $response = $connection->raw()->bulk($params);
+            $bulkResponse = $connection->getClient()->bulk($params);
 
-            if (isset($response['errors']) && $response['errors']) {
+            if (isset($bulkResponse['errors']) && $bulkResponse['errors']) {
                 if ( ! $this->option('hide-errors')) {
-                    $items = json_encode($response['items']);
+                    $items = json_encode(
+                        $bulkResponse['items'],
+                        JSON_THROW_ON_ERROR
+                    );
 
                     if ( ! $this->option('skip-errors')) {
                         $this->warn("\n{$items}");
@@ -208,16 +199,18 @@ class ReindexCommand extends Command
             $this->output->progressFinish();
 
             $total = $connection
-                ->index($originalIndex)
+                ->index($originalIndex->getName())
                 ->count();
 
             if ($errors > 0) {
-                $this->warn("{$total} documents reindexed with {$errors} errors.");
+                $this->warn(
+                    "{$total} documents re-indexed with {$errors} errors."
+                );
 
                 return;
             }
 
-            $this->info("{$total} documents reindexed successfully.");
+            $this->info("{$total} documents re-indexed successfully.");
 
             return;
         }
@@ -227,7 +220,7 @@ class ReindexCommand extends Command
         $this->migrate(
             $originalIndex,
             $newIndex,
-            $documents['_scroll_id'],
+            $response['_scroll_id'],
             $errors,
             $page
         );

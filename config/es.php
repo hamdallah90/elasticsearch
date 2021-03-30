@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 return [
 
     /*
@@ -74,36 +76,36 @@ return [
             'settings' => [
                 'number_of_shards' => 1,
                 'number_of_replicas' => 0,
-                "index.mapping.ignore_malformed" => false,
+                'index.mapping.ignore_malformed' => false,
 
-                "analysis" => [
-                    "filter" => [
-                        "english_stop" => [
-                            "type" => "stop",
-                            "stopwords" => "_english_",
+                'analysis' => [
+                    'filter' => [
+                        'english_stop' => [
+                            'type' => 'stop',
+                            'stopwords' => '_english_',
                         ],
-                        "english_keywords" => [
-                            "type" => "keyword_marker",
-                            "keywords" => ["example"],
+                        'english_keywords' => [
+                            'type' => 'keyword_marker',
+                            'keywords' => ['example'],
                         ],
-                        "english_stemmer" => [
-                            "type" => "stemmer",
-                            "language" => "english",
+                        'english_stemmer' => [
+                            'type' => 'stemmer',
+                            'language' => 'english',
                         ],
-                        "english_possessive_stemmer" => [
-                            "type" => "stemmer",
-                            "language" => "possessive_english",
+                        'english_possessive_stemmer' => [
+                            'type' => 'stemmer',
+                            'language' => 'possessive_english',
                         ],
                     ],
-                    "analyzer" => [
-                        "rebuilt_english" => [
-                            "tokenizer" => "standard",
-                            "filter" => [
-                                "english_possessive_stemmer",
-                                "lowercase",
-                                "english_stop",
-                                "english_keywords",
-                                "english_stemmer",
+                    'analyzer' => [
+                        'rebuilt_english' => [
+                            'tokenizer' => 'standard',
+                            'filter' => [
+                                'english_possessive_stemmer',
+                                'lowercase',
+                                'english_stop',
+                                'english_keywords',
+                                'english_stemmer',
                             ],
                         ],
                     ],

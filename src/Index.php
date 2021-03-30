@@ -6,8 +6,8 @@ namespace Matchory\Elasticsearch;
 
 use ArrayObject;
 use Elasticsearch\Client;
-use JetBrains\PhpStorm\Deprecated;
 use Matchory\Elasticsearch\Interfaces\ConnectionInterface;
+use Stringable;
 use TypeError;
 
 use function array_unique;
@@ -16,123 +16,92 @@ use function is_array;
 use function is_string;
 
 /**
- * Class Index
+ * Index
  *
- * @package Matchory\Elasticsearch\Query
+ * Abstracts a single Elasticsearch index.
+ *
+ * @bundle Matchory\Elasticsearch
  */
-class Index
+class Index implements Stringable
 {
-    private const PARAM_ALIASES = 'aliases';
+    private const ALIASES = 'aliases';
 
-    private const PARAM_BODY = 'body';
+    private const BODY = 'body';
 
-    private const PARAM_CLIENT = 'client';
+    private const CLIENT = 'client';
 
-    private const PARAM_CLIENT_IGNORE = 'ignore';
+    private const CLIENT_IGNORE = 'ignore';
 
-    private const PARAM_INDEX = 'index';
+    private const INDEX = 'index';
 
-    private const PARAM_MAPPINGS = 'mappings';
+    private const MAPPINGS = 'mappings';
 
-    private const PARAM_SETTINGS = 'settings';
+    private const SETTINGS = 'settings';
 
-    private const PARAM_SETTINGS_NUMBER_OF_REPLICAS = 'number_of_replicas';
+    private const SETTINGS_NUMBER_OF_REPLICAS = 'number_of_replicas';
 
-    private const PARAM_SETTINGS_NUMBER_OF_SHARDS = 'number_of_shards';
-
-    /**
-     * Index create callback
-     *
-     * @var callable|null
-     * @deprecated Will be made private in the next major release.
-     */
-    #[Deprecated()]
-    public $callback;
-
-    /**
-     * Native elasticsearch client instance
-     *
-     * @var ConnectionInterface
-     * @deprecated Will be made private in the next major release. Use the
-     *             method accessor instead.
-     * @see        Index::getConnection()
-     */
-    #[Deprecated(replacement: '%class%::getConnection()')]
-    public $connection;
-
-    /**
-     * Ignored HTTP errors
-     *
-     * @var array
-     * @deprecated Will be made private in the next major release. Use the
-     *             method accessor instead.
-     * @see        Index::ignore()
-     */
-    #[Deprecated(replacement: '%class%::ignore()')]
-    public $ignores = [];
-
-    /**
-     * Mappings the index shall be configured with.
-     *
-     * @var array
-     * @deprecated Will be made private in the next major release. Use the
-     *             method accessor instead.
-     * @see        Index::mapping()
-     */
-    #[Deprecated(replacement: '%class%::mapping()')]
-    public $mappings = [];
-
-    /**
-     * Index name
-     *
-     * @var string
-     * @deprecated Will be made private in the next major release. Use the
-     *             method accessor instead.
-     * @see        Index::getName()
-     */
-    public $name;
-
-    /**
-     * The number of replicas the index shall be configured with.
-     *
-     * @var int
-     * @deprecated Will be made private in the next major release. Use the
-     *             method accessor instead.
-     * @see        Index::replicas()
-     */
-    #[Deprecated(replacement: '%class%::replicas()')]
-    public $replicas = 0;
-
-    /**
-     * The number of shards the index shall be configured with.
-     *
-     * @var int
-     * @deprecated Will be made private in the next major release. Use the
-     *             method accessor instead.
-     * @see        Index::shards()
-     */
-    #[Deprecated(replacement: '%class%::shards()')]
-    public $shards = 5;
+    private const SETTINGS_NUMBER_OF_SHARDS = 'number_of_shards';
 
     /**
      * Aliases the index shall be configured with.
      *
      * @var array<string, array<string, mixed>|string|ArrayObject>
      */
-    protected $aliases = [];
+    private array $aliases = [];
+
+    /**
+     * Ignored HTTP errors
+     *
+     * @var string[]
+     */
+    private array $ignores = [];
+
+    /**
+     * Mappings the index shall be configured with.
+     */
+    private array $mappings = [];
+
+    /**
+     * The number of replicas the index shall be configured with.
+     */
+    private int|null $replicas = null;
+
+    /**
+     * The number of shards the index shall be configured with.
+     */
+    private int|null $shards = null;
 
     /**
      * Creates a new index instance.
      *
-     * @param string        $name     Name of the index to create.
-     * @param callable|null $callback Callback to configure the index before it
-     *                                is created. This allows to add additional
-     *                                options like shards, replicas or mappings.
+     * @param ConnectionInterface $connection    Elasticsearch connection to use.
+     * @param string              $name          Name of the index to create.
+     *                                           Index names must meet the
+     *                                           following criteria:
+     *                                           - Lowercase only
+     *                                           - Cannot include \, /, *, ?, ",
+     *                                           <, >, |, ` ` (space character),
+     *                                           `,`, or #
+     *                                           - Indices prior to 7.0 could
+     *                                           contain a colon (:), but that’s
+     *                                           been deprecated and won’t be
+     *                                           supported in 7.0+
+     *                                           - Cannot start with -, _, +
+     *                                           - Cannot be `.` or `..`
+     *                                           - Cannot be longer than 255
+     *                                           bytes (note it is bytes, so
+     *                                           multibyte characters will
+     *                                           count towards the 255 limit
+     *                                           faster)
+     *                                           - Names starting with `.` are
+     *                                           deprecated, except for hidden
+     *                                           indices and internal indices
+     *                                           managed by plugins
      */
-    public function __construct(string $name, ?callable $callback = null)
-    {
-        $this->name = $name;
-        $this->callback = $callback;
+    public function __construct(
+        private ConnectionInterface $connection,
+        private readonly string $name
+    ) {
     }
 
     /**
@@ -158,6 +127,16 @@ class Index
     }
 
     /**
+     * Retrieves the name of the new index.
+     *
+     * @return string
+     */
+    public function getName(): string
+    {
+        return $this->name;
+    }
+
+    /**
      * Sets the active connection on the index.
      *
      * @param ConnectionInterface $connection
@@ -170,13 +149,11 @@ class Index
     }
 
     /**
-     * Retrieves the name of the new index.
-     *
-     * @return string
+     * @inheritdoc
      */
-    public function getName(): string
+    public function __toString(): string
     {
-        return $this->name;
+        return $this->getName();
     }
 
     /**
@@ -195,15 +172,17 @@ class Index
      * an index.
      *
      * @param string                        $alias   Name of the alias to add.
-     * @param array|ArrayObject|string|null $options Options to pass to
+     * @param ArrayObject|array|string|null $options Options to pass to
      *                                               the alias.
      *
      * @return $this
      * @see https://www.elastic.co/guide/en/elasticsearch/reference/master/indices-aliases.html
      * @see https://www.elastic.co/guide/en/elasticsearch/reference/current/indices-create-index.html#create-index-aliases
      */
-    public function alias(string $alias, $options = null): self
-    {
+    public function alias(
+        string $alias,
+        ArrayObject|array|string $options = null
+    ): self {
         if (
             $options !== null &&
             ! is_string($options) &&
@@ -220,46 +199,63 @@ class Index
         return $this;
     }
 
+    public function count(): int
+    {
+        return $this->getConnection()->newQuery()->count();
+    }
+
     /**
-     * Creates a new index
+     * Creates a new index.
      *
-     * @return array
+     * You can use the create index API to add a new index to an Elasticsearch
+     * cluster. When creating an index, you can specify the following:
+     *  - Settings for the index
+     *  - Mappings for fields in the index
+     *  - Index aliases
+     *
+     *
+     *
+     * @return array{
+     *     acknowledged: bool,
+     *     shards_acknowledged: bool,
+     *     index: string
+     * }
      * @see https://www.elastic.co/guide/en/elasticsearch/reference/current/indices-create-index.html
      */
     public function create(): array
     {
-        $configuratorCallback = $this->callback;
+        $body = [];
+        $settings = [];
 
-        // By passing a callback, users have the possibility to optionally set
-        // index configuration in a single, fluent command.
-        // This API is a little unfortunate, so we should refactor that in the
-        // next major release.
-        if ($configuratorCallback) {
-            $configuratorCallback($this);
+        if ($this->shards !== null) {
+            $settings[self::SETTINGS_NUMBER_OF_SHARDS] = $this->shards;
+        }
+
+        if ($this->replicas !== null) {
+            $settings[self::SETTINGS_NUMBER_OF_REPLICAS] = $this->replicas;
+        }
+
+        if ($settings) {
+            $body[self::SETTINGS] = $settings;
         }
 
         $params = [
-            self::PARAM_INDEX => $this->name,
-            self::PARAM_BODY => [
-                self::PARAM_SETTINGS => [
-                    self::PARAM_SETTINGS_NUMBER_OF_SHARDS => $this->shards,
-                    self::PARAM_SETTINGS_NUMBER_OF_REPLICAS => $this->replicas,
-                ],
-            ],
+            self::INDEX => $this->name,
+            self::BODY => $body,
         ];
 
         if (count($this->ignores) > 0) {
-            $params[self::PARAM_CLIENT] = [
-                self::PARAM_CLIENT_IGNORE => $this->ignores,
+            $params[self::CLIENT] = [
+                self::CLIENT_IGNORE => $this->ignores,
             ];
         }
 
         if (count($this->aliases) > 0) {
-            $params[self::PARAM_BODY][self::PARAM_ALIASES] = $this->aliases;
+            $params[self::BODY][self::ALIASES] = $this->aliases;
         }
 
         if (count($this->mappings) > 0) {
-            $params[self::PARAM_BODY][self::PARAM_MAPPINGS] = $this->mappings;
+            $params[self::BODY][self::MAPPINGS] = $this->mappings;
         }
 
         return $this
@@ -272,27 +268,41 @@ class Index
     /**
      * Deletes an existing index.
      *
-     * @return array
+     * Deleting an index deletes its documents, shards, and metadata.
+     * It does not delete related Kibana components, such as data views,
+     * visualizations, or dashboards.
+     *
+     * You cannot delete the current write index of a data stream. To delete the
+     * index, you must roll over the data stream so a new write index is
+     * created. You can then use the `delete index API` to delete the previous
+     * write index.
+     *
      * @see https://www.elastic.co/guide/en/elasticsearch/reference/current/indices-delete-index.html
      */
-    public function drop(): array
+    public function drop(): void
     {
-        return $this
+        $parameters = [
+            self::INDEX => $this->name,
+        ];
+
+        if (count($this->ignores) > 0) {
+            $parameters[self::CLIENT] = [
+                self::CLIENT_IGNORE => $this->ignores,
+            ];
+        }
+
+        $this
             ->getConnection()
             ->getClient()
             ->indices()
-            ->delete([
-                self::PARAM_INDEX => $this->name,
-                self::PARAM_CLIENT => [
-                    self::PARAM_CLIENT_IGNORE => $this->ignores,
-                ],
-            ]);
+            ->delete($parameters);
     }
 
     /**
      * Checks whether an index exists.
      *
      * @return bool
+     * @see https://www.elastic.co/guide/en/elasticsearch/reference/current/indices-exists.html#indices-exists
      */
     public function exists(): bool
     {
@@ -303,19 +313,6 @@ class Index
             ->exists([
                 'index' => $this->name,
             ]);
-    }
-
-    /**
-     * Alias to the {@see Index::ignores()} method.
-     *
-     * @param int ...$statusCodes
-     *
-     * @return $this
-     */
-    #[Deprecated(replacement: '%class%->ignores(%parametersList%)')]
-    public function ignore(int ...$statusCodes): self
-    {
-        return $this->ignores(...$statusCodes);
     }
 
     /**

@@ -11,7 +11,6 @@ use Illuminate\Contracts\Support\Arrayable;
 use Illuminate\Contracts\Support\Jsonable;
 use Illuminate\Support\Traits\ForwardsCalls;
 use IteratorAggregate;
-use JetBrains\PhpStorm\Deprecated;
 use JsonException;
 use JsonSerializable;
 use Matchory\Elasticsearch\Concerns\AppliesScopes;
@@ -20,6 +19,7 @@ use Matchory\Elasticsearch\Concerns\ExecutesQueries;
 use Matchory\Elasticsearch\Concerns\ExplainsQueries;
 use Matchory\Elasticsearch\Concerns\ManagesIndices;
 use Matchory\Elasticsearch\Interfaces\ConnectionInterface;
+use Psr\SimpleCache\InvalidArgumentException;
 
 use function count;
 use function json_encode;
@@ -27,18 +27,25 @@ use function json_encode;
 use const JSON_THROW_ON_ERROR;
 
 /**
- * Query
- * =====
  * Query builder instance for Elasticsearch queries
  *
- * @package Matchory\Elasticsearch\Query
- * @todo    Rename to "Builder" for coherency with Eloquent. To avoid breaking
- *          changes, an alias should be registered for Query
+ * @package  Matchory\Elasticsearch\Query
+ * @template T of Model
  */
-class Query implements Arrayable, JsonSerializable, Jsonable, IteratorAggregate
+class Builder implements Arrayable, JsonSerializable, Jsonable, IteratorAggregate
 {
     use AppliesScopes;
+
+    /**
+     * @uses BuildsFluentQueries<T>
+     * @use  BuildsFluentQueries<T>
+     */
     use BuildsFluentQueries;
+
+    /**
+     * @uses ExecutesQueries<T>
+     * @use  ExecutesQueries<T>
+     */
     use ExecutesQueries;
     use ForwardsCalls;
     use ManagesIndices;
@@ -53,28 +60,6 @@ class Query implements Arrayable, JsonSerializable, Jsonable, IteratorAggregate
     public const EQ = self::OPERATOR_EQUAL;
 
     public const EXISTS = self::OPERATOR_EXISTS;
-
-    public const FIELD_AGGS = 'aggs';
-
-    protected const FIELD_HIGHLIGHT = '_highlight';
-
-    protected const FIELD_HITS = 'hits';
-
-    protected const FIELD_ID = '_id';
-
-    protected const FIELD_INDEX = '_index';
-
-    protected const FIELD_NESTED_HITS = 'hits';
-
-    protected const FIELD_QUERY = 'query';
-
-    protected const FIELD_SCORE = '_score';
-
-    protected const FIELD_SORT = 'sort';
-
-    protected const FIELD_SOURCE = '_source';
-
-    protected const FIELD_TYPE = '_type';
 
     public const GT = self::OPERATOR_GREATER_THAN;
 
@@ -104,74 +89,38 @@ class Query implements Arrayable, JsonSerializable, Jsonable, IteratorAggregate
 
     public const OPERATOR_NOT_EQUAL = '!=';
 
-    public const PARAM_BODY = 'body';
-
-    public const PARAM_CLIENT = 'client';
-
-    public const PARAM_CLIENT_IGNORE = 'ignore';
-
-    public const PARAM_FROM = 'from';
-
-    public const PARAM_INDEX = 'index';
-
-    public const PARAM_SCROLL = 'scroll';
-
-    public const PARAM_SCROLL_ID = 'scroll_id';
-
-    public const PARAM_SEARCH_TYPE = 'search_type';
-
-    public const PARAM_SIZE = 'size';
-
-    public const PARAM_TYPE = 'type';
-
     public const REGEXP_FLAG_ALL = 1;
 
-    public const REGEXP_FLAG_ANYSTRING = 16;
+    public const REGEXP_FLAG_ANYSTRING = 32;
 
-    public const REGEXP_FLAG_COMPLEMENT = 2;
+    public const REGEXP_FLAG_COMPLEMENT = 4;
 
-    public const REGEXP_FLAG_INTERSECTION = 8;
+    public const REGEXP_FLAG_INTERSECTION = 16;
 
-    public const REGEXP_FLAG_INTERVAL = 4;
+    public const REGEXP_FLAG_INTERVAL = 8;
 
-    public const SOURCE_EXCLUDES = 'excludes';
+    public const REGEXP_FLAG_NONE = 2;
 
-    public const SOURCE_INCLUDES = 'includes';
-
-    protected static $defaultSource = [
-        self::SOURCE_INCLUDES => [],
-        self::SOURCE_EXCLUDES => [],
+    private static array $defaultSource = [
+        'includes' => [],
+        'excludes' => [],
     ];
 
     /**
-     * @var null
-     * @deprecated Use getConnection()->getClient() to access the client instead
-     * @see        ConnectionInterface::getClient()
-     * @see        Query::getConnection()
-     */
-    #[Deprecated(replacement: '%class%->getConnection()->getClient()')]
-    public $client = null;
-
-    /**
-     * Elastic model instance.
-     *
-     * @var Model
-     * @deprecated Use getModel() instead
-     * @see        Query::getModel()
-     */
-    #[Deprecated(replacement: '%class%->getModel()')]
-    public $model;
-
-    /**
      * Elasticsearch connection instance
-     * =================================
+     *
      * This connection instance will receive any unresolved method calls from
      * the query, effectively acting as a proxy: The connection itself proxies
      * to the Elasticsearch client instance.
-     *
-     * @var ConnectionInterface
      */
-    protected $connection;
+    private ConnectionInterface $connection;
+
+    /**
+     * Elasticsearch model instance.
+     *
+     * @var T
+     */
+    private Model $model;
 
     /**
      * Creates a new query builder instance.
@@ -179,13 +128,17 @@ class Query implements Arrayable, JsonSerializable, Jsonable, IteratorAggregate
      * @param ConnectionInterface $connection Elasticsearch connection the query
      *                                        builder uses.
      */
-    public function __construct(ConnectionInterface $connection)
-    {
+    public function __construct(
+        ConnectionInterface $connection,
+        Model|null $model = null
+    ) {
         $this->connection = $connection;
 
         // We set a plain model here so there's always a model instance set.
         // This avoids errors in methods that rely on a model.
-        $this->setModel(new Model());
+        /** @var T $model */
+        $model = $model ?? new Model();
+        $this->model = $model;
     }
 
     /**
@@ -205,6 +158,7 @@ class Query implements Arrayable, JsonSerializable, Jsonable, IteratorAggregate
      * directly as though it were a result collection.
      *
      * @inheritDoc
+     * @throws InvalidArgumentException
      */
     final public function getIterator(): ArrayIterator
     {
@@ -216,11 +170,11 @@ class Query implements Arrayable, JsonSerializable, Jsonable, IteratorAggregate
      * the model that initiated a query, but defaults to the Model class itself
      * if the query builder is used without models.
      *
-     * @return Model Model instance used for the current query.
+     * @return T Model instance used for the current query.
+     * @internal
      */
     public function getModel(): Model
     {
-        /** @noinspection PhpDeprecationInspection */
         return $this->model;
     }
 
@@ -228,13 +182,13 @@ class Query implements Arrayable, JsonSerializable, Jsonable, IteratorAggregate
      * Sets the model the query is based on. Any results will be casted to this
      * model. If no model is set, a plain model instance will be used.
      *
-     * @param Model $model Model to use for the current query.
+     * @param T $model Model to use for the current query.
      *
      * @return $this Query builder instance for chaining.
+     * @internal This method will be called by the model automatically.
      */
     public function setModel(Model $model): self
     {
-        /** @noinspection PhpDeprecationInspection */
         $this->model = $model;
 
         return $this;
@@ -293,7 +247,7 @@ class Query implements Arrayable, JsonSerializable, Jsonable, IteratorAggregate
      */
     final public function toArray(): array
     {
-        return $this->buildQuery();
+        return (clone $this)->buildQuery();
     }
 
     /**
@@ -319,34 +273,30 @@ class Query implements Arrayable, JsonSerializable, Jsonable, IteratorAggregate
     {
         $query = $this->applyScopes();
 
-        $params = [
-            self::PARAM_BODY => $query->getBody(),
-            self::PARAM_FROM => $query->getSkip(),
-            self::PARAM_SIZE => $query->getSize(),
+        $parameters = [
+            'body' => $query->buildBody(),
+            'from' => $query->getSkip(),
+            'size' => $query->getSize(),
         ];
 
         if (count($query->getIgnores())) {
-            $params[self::PARAM_CLIENT] = [
-                self::PARAM_CLIENT_IGNORE => $query->ignores,
+            $parameters['client'] = [
+                'ignore' => $query->ignores,
             ];
         }
 
         if ($searchType = $query->getSearchType()) {
-            $params[self::PARAM_SEARCH_TYPE] = $searchType;
+            $parameters['search_type'] = $searchType;
         }
 
         if ($scroll = $query->getScroll()) {
-            $params[self::PARAM_SCROLL] = $scroll;
+            $parameters['scroll'] = $scroll;
         }
 
         if ($index = $query->getIndex()) {
-            $params[self::PARAM_INDEX] = $index;
+            $parameters['index'] = $index;
         }
 
-        if ($type = $query->getType()) {
-            $params[self::PARAM_TYPE] = $type;
-        }
-
-        return $params;
+        return $parameters;
     }
 }

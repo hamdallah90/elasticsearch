@@ -2,10 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Matchory\Elasticsearch\Classes;
-
-use JetBrains\PhpStorm\Deprecated;
-use Matchory\Elasticsearch\Query;
+namespace Matchory\Elasticsearch;
 
 /**
  * Class Bulk
@@ -15,77 +12,58 @@ use Matchory\Elasticsearch\Query;
 class Bulk
 {
     /**
-     * The document key
-     *
-     * @var string|null
-     */
-    public $_id;
-
-    /**
      * Operation count which will trigger autocommit
      *
      * @var int
      */
-    public $autocommitAfter = 0;
+    public int $autocommitAfter = 0;
 
     /**
      * Bulk body
      *
      * @var array
      */
-    public $body = [];
+    public array $body = [];
+
+    /**
+     * The query object
+     *
+     * @var Builder
+     */
+    public Builder $builder;
+
+    /**
+     * The document key
+     *
+     * @var string|null
+     */
+    public string|null $id = null;
 
     /**
      * The index name
      *
      * @var string|null
      */
-    public $index;
+    public string|null $index = null;
 
     /**
      * Number of pending operations
      *
      * @var int
      */
-    public $operationCount = 0;
+    public int $operationCount = 0;
 
     /**
-     * The query object
-     *
-     * @var Query
-     */
-    public $query;
-
-    /**
-     * The type name
-     *
-     * @var string|null
-     */
-    public $type;
-
-    /**
-     * @param Query    $query
+     * @param Builder  $builder
      * @param int|null $autocommitAfter
      */
-    public function __construct(Query $query, ?int $autocommitAfter = null)
-    {
-        $this->query = $query;
+    public function __construct(
+        Builder $builder,
+        int|null $autocommitAfter = null
+    ) {
+        $this->builder = $builder;
 
         $this->autocommitAfter = (int)$autocommitAfter;
-    }
-
-    /**
-     * Filter by _id
-     *
-     * @param string|null $_id
-     *
-     * @return $this
-     */
-    public function _id(?string $_id = null): self
-    {
-        $this->_id = $_id;
-
-        return $this;
     }
 
     /**
@@ -101,8 +79,7 @@ class Bulk
         $this->body['body'][] = [
             $actionType => [
                 '_index' => $this->getIndex(),
-                '_type' => $this->getType(),
-                '_id' => $this->_id,
+                '_id' => $this->id,
             ],
         ];
 
@@ -141,14 +118,14 @@ class Bulk
      *
      * @return array|null
      */
-    public function commit(): ?array
+    public function commit(): array|null
     {
         if (empty($this->body)) {
             return null;
         }
 
         $result = $this
-            ->query
+            ->builder
             ->getConnection()
             ->getClient()
             ->bulk($this->body);
@@ -170,15 +147,17 @@ class Bulk
     }
 
     /**
-     * Just an alias for _id() method
+     * Filter by _id
      *
-     * @param string|null $_id
+     * @param string|null $id
      *
      * @return $this
      */
-    public function id(?string $_id = null): self
+    public function id(string|null $id = null): self
     {
-        return $this->_id($_id);
+        $this->id = $id;
+
+        return $this;
     }
 
     /**
@@ -188,7 +167,7 @@ class Bulk
      *
      * @return $this
      */
-    public function index(?string $index = null): self
+    public function index(string|null $index = null): self
     {
         $this->index = $index;
 
@@ -214,22 +193,8 @@ class Bulk
      */
     public function reset(): void
     {
+        $this->id();
         $this->index();
-        $this->type();
-    }
-
-    /**
-     * Set the type name
-     *
-     * @param string|null $type
-     *
-     * @return $this
-     */
-    public function type(?string $type = null): self
-    {
-        $this->type = $type;
-
-        return $this;
     }
 
     /**
@@ -249,21 +214,8 @@ class Bulk
      *
      * @return string|null
      */
-    protected function getIndex(): ?string
+    protected function getIndex(): string|null
     {
-        return $this->index ?: $this->query->getIndex();
-    }
-
-    /**
-     * Get the type name
-     *
-     * @return string|null
-     * @deprecated Mapping types are deprecated as of Elasticsearch 7.0.0
-     * @see        https://www.elastic.co/guide/en/elasticsearch/reference/7.10/removal-of-types.html
-     */
-    #[Deprecated(reason: 'Mapping types are deprecated as of Elasticsearch 7.0.0')]
-    protected function getType(): ?string
-    {
-        return $this->type ?: $this->query->getType();
+        return $this->index ?: $this->builder->getIndex();
     }
 }

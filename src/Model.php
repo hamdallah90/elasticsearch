@@ -6,35 +6,31 @@ namespace Matchory\Elasticsearch;
 
 use ArrayAccess;
 use BadMethodCallException;
-use Carbon\Exceptions\InvalidFormatException;
-use Illuminate\Contracts\Encryption\DecryptException;
-use Illuminate\Contracts\Encryption\EncryptException;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Contracts\Queue\QueueableEntity;
 use Illuminate\Contracts\Routing\UrlRoutable;
 use Illuminate\Contracts\Support\Arrayable;
 use Illuminate\Contracts\Support\Jsonable;
+use Illuminate\Database\Eloquent\Concerns\GuardsAttributes;
+use Illuminate\Database\Eloquent\Concerns\HasAttributes;
+use Illuminate\Database\Eloquent\Concerns\HasEvents;
+use Illuminate\Database\Eloquent\Concerns\HidesAttributes;
+use Illuminate\Database\Eloquent\InvalidCastException;
 use Illuminate\Database\Eloquent\JsonEncodingException;
 use Illuminate\Database\Eloquent\MassAssignmentException;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Collection as BaseCollection;
 use Illuminate\Support\Str;
 use Illuminate\Support\Traits\ForwardsCalls;
-use InvalidArgumentException;
 use JetBrains\PhpStorm\Deprecated;
 use JsonException;
 use JsonSerializable;
-use Matchory\Elasticsearch\Compatibility\Exceptions\InvalidCastException;
-use Matchory\Elasticsearch\Compatibility\GuardsAttributes;
-use Matchory\Elasticsearch\Compatibility\HasAttributes;
-use Matchory\Elasticsearch\Compatibility\HasEvents;
-use Matchory\Elasticsearch\Compatibility\HidesAttributes;
 use Matchory\Elasticsearch\Concerns\HasGlobalScopes;
+use Matchory\Elasticsearch\Concerns\StubRelations;
 use Matchory\Elasticsearch\Exceptions\DocumentNotFoundException;
 use Matchory\Elasticsearch\Interfaces\ConnectionInterface as Connection;
 use Matchory\Elasticsearch\Interfaces\ConnectionResolverInterface as Resolver;
-
-use ReturnTypeWillChange;
+use Psr\SimpleCache\InvalidArgumentException as CacheException;
 
 use function array_key_exists;
 use function array_merge;
@@ -63,11 +59,11 @@ use const DATE_ATOM;
  *
  * @property-read string|null _id
  * @property-read string|null _index
- * @property-read string|null _type
  * @property-read float|null  _score
- * @property-read array|null  highlight
+ * @property-read array|null  _highlight
+ * @mixin Builder<$this>
  *
- * @package Matchory\Elasticsearch
+ * @package  Matchory\Elasticsearch
  */
 class Model implements Arrayable,
                        ArrayAccess,
@@ -76,6 +72,12 @@ class Model implements Arrayable,
                        QueueableEntity,
                        UrlRoutable
 {
+    use StubRelations {
+        StubRelations::getRelationValue insteadof HasAttributes;
+        StubRelations::isRelation insteadof HasAttributes;
+        StubRelations::relationsToArray insteadof HasAttributes;
+    }
+
     use ForwardsCalls;
     use HasAttributes;
     use HidesAttributes;
@@ -83,91 +85,84 @@ class Model implements Arrayable,
     use HasGlobalScopes;
     use GuardsAttributes;
 
-    protected const FIELD_ID = '_id';
+    public const FIELD_ID = '_id';
 
     /**
      * The array of booted models.
      *
      * @var array<string, bool>
      */
-    protected static $booted = [];
+    protected static array $booted = [];
 
     /**
      * The event dispatcher instance.
      *
      * @var Dispatcher
      */
-    protected static $dispatcher;
+    protected static Dispatcher $dispatcher;
 
     /**
      * The connection resolver instance.
      *
-     * @var Resolver
+     * @var Resolver<static>|null
      */
-    protected static $resolver;
+    protected static Resolver|null $resolver = null;
 
     /**
      * The array of trait initializers that will be called on each new instance.
      *
      * @var array<string, string[]>
      */
-    protected static $traitInitializers = [];
+    protected static array $traitInitializers = [];
 
     /**
      * Indicates if the model was inserted during the current request lifecycle.
      *
      * @var bool
      */
-    public $wasRecentlyCreated = false;
+    public bool $wasRecentlyCreated = false;
 
     /**
      * Model connection name. If `null` it will use the default connection.
      *
      * @var string|null
      */
-    protected $connectionName = null;
-
-    /**
-     * Indicates whether the model exists in the Elasticsearch index.
-     *
-     * @var bool
-     */
-    protected $exists = false;
-
-    /**
-     * Index name
-     *
-     * @var string|null
-     */
-    protected $index = null;
-
-    /**
-     * Metadata received from Elasticsearch as part of the response
-     *
-     * @var array<string, mixed>
-     */
-    protected $resultMetadata = [];
-
-    /**
-     * Model selectable fields
-     *
-     * @var string[]
-     */
-    protected $selectable = [];
-
-    /**
-     * Document mapping type
-     *
-     * @var string|null
-     */
-    protected $type = null;
+    protected string|null $connection = null;
 
     /**
      * Model unselectable fields
      *
      * @var string[]
      */
-    protected $unselectable = [];
+    protected array $excluded = [];
+
+    /**
+     * Indicates whether the model exists in the Elasticsearch index.
+     *
+     * @var bool
+     */
+    protected bool $exists = false;
+
+    /**
+     * Model selectable fields
+     *
+     * @var string[]
+     */
+    protected array $included = [];
+
+    /**
+     * Index name
+     *
+     * @var string|null
+     */
+    protected string|null $index = null;
+
+    /**
+     * Metadata received from Elasticsearch as part of the response
+     *
+     * @var array<string, mixed>
+     */
+    protected array $resultMetadata = [];
 
     /**
      * Create a new Elasticsearch model instance.
@@ -210,13 +205,9 @@ class Model implements Arrayable,
      * @param string $key
      *
      * @return mixed
-     * @throws DecryptException
      * @throws InvalidCastException
-     * @throws InvalidFormatException
-     * @throws JsonException
-     * @noinspection PhpDeprecationInspection
      */
-    public function getAttribute(string $key)
+    public function getAttribute(string $key): mixed
     {
         if ( ! $key) {
             return null;
@@ -230,10 +221,6 @@ class Model implements Arrayable,
 
         if ($key === '_index') {
             return $this->getIndex();
-        }
-
-        if ($key === '_type') {
-            return $this->getType();
         }
 
         if ($key === '_score') {
@@ -255,9 +242,9 @@ class Model implements Arrayable,
     }
 
     /**
-     * Get all of the current attributes on the model.
+     * Get all the current attributes on the model.
      *
-     * @return array
+     * @return array<string, mixed>
      */
     public function getAttributes(): array
     {
@@ -275,56 +262,6 @@ class Model implements Arrayable,
     }
 
     /**
-     * Get current connection name
-     *
-     * @return string
-     * @deprecated Use getConnectionName instead. This method will be changed in
-     *             the next major version to return the connection instance
-     *             instead.
-     * @see        Model::getConnectionName()
-     */
-    #[Deprecated(replacement: '%class%->getConnectionName()')]
-    public function getConnection(): ?string
-    {
-        return $this->getConnectionName();
-    }
-
-    /**
-     * Get current connection name
-     *
-     * @return string
-     */
-    public function getConnectionName(): ?string
-    {
-        return $this->connectionName ?: null;
-    }
-
-    /**
-     * Set current connection name
-     *
-     * @param string|null $connectionName
-     *
-     * @return void
-     */
-    public function setConnectionName(?string $connectionName): void
-    {
-        $this->connectionName = $connectionName;
-    }
-
-    /**
-     * Get the connection resolver instance.
-     *
-     * @return Resolver
-     * @internal This method is used by the package during initialization to get
-     *           the models to resolve the Elasticsearch connection. You won't
-     *           need it during normal operation. It may change at any time.
-     */
-    public static function getConnectionResolver(): Resolver
-    {
-        return static::$resolver;
-    }
-
-    /**
      * Get the format for database stored dates.
      *
      * @return string
@@ -335,18 +272,130 @@ class Model implements Arrayable,
     }
 
     /**
-     * Retrieves the result highlights.
+     * Set a given attribute on the model.
      *
-     * @return array<string, mixed>|null
-     * @throws DecryptException
+     * @param string $key
+     * @param mixed  $value
+     *
+     * @return $this
      * @throws InvalidCastException
-     * @throws InvalidFormatException
-     * @throws JsonException
-     * @internal
+     * @throws JsonEncodingException
      */
-    public function getHighlight(): ?array
+    public function setAttribute(string $key, mixed $value): self
     {
-        return $this->getResultMetadataValue('highlight');
+        // First we will check for the presence of a mutator for the set
+        // operation which simply lets the developers tweak the attribute as it
+        // is set on the model, such as "json_encoding" and listing of data
+        // for storage.
+        if ($this->hasSetMutator($key)) {
+            return $this->setMutatedAttributeValue($key, $value);
+        }
+
+        if ($value && $this->isDateAttribute($key)) {
+            $value = $this->fromDateTime($value);
+        }
+
+        // If an attribute is listed as a "date", we'll convert it from a
+        // DateTime instance into a form proper for storage on the index.
+        // We will auto set the values.
+        if ($this->isClassCastable($key)) {
+            $this->setClassCastableAttribute($key, $value);
+
+            return $this;
+        }
+
+        if ( ! is_null($value) && $this->isJsonCastable($key)) {
+            $value = $this->castAttributeAsJson($key, $value);
+        }
+
+        // If this attribute contains a JSON ->, we'll set the proper value in
+        // the attribute's underlying array. This takes care of properly nesting
+        // an attribute in the array's value in the case of deeply nested items.
+        if (Str::contains($key, '->')) {
+            return $this->fillJsonAttribute($key, $value);
+        }
+
+        if ( ! is_null($value) && $this->isEncryptedCastable($key)) {
+            $value = $this->castAttributeAsEncryptedString($key, $value);
+        }
+
+        $this->attributes[$key] = $value;
+
+        return $this;
+    }
+
+    /**
+     * Set the date format used by the model.
+     *
+     * @param string $format
+     *
+     * @return static
+     */
+    public function setDateFormat(string $format): self
+    {
+        $this->dateFormat = $format;
+
+        return $this;
+    }
+
+    /**
+     * Transform a raw model value using mutators, casts, etc.
+     *
+     * @param string $key
+     * @param mixed  $value
+     *
+     * @return mixed
+     */
+    protected function transformModelValue(string $key, $value): mixed
+    {
+        // If the attribute has a get mutator, we will call that, then return
+        // what it returns as the value, which is useful for transforming values
+        // on  retrieval from the model to a form that is more useful for usage.
+        if ($this->hasGetMutator($key)) {
+            return $this->mutateAttribute($key, $value);
+        }
+
+        // If the attribute exists within the cast array, we will convert it to
+        // an appropriate native PHP type dependent upon the associated value
+        // given with the key in the pair. Dayle made this comment line up.
+        if ($this->hasCast($key)) {
+            return $this->castAttribute($key, $value);
+        }
+
+        return $value;
+    }
+
+    /**
+     * Get current connection name
+     *
+     * @return string|null
+     */
+    public function getConnectionName(): string|null
+    {
+        return $this->connection ?: null;
+    }
+
+    /**
+     * Get the connection resolver instance.
+     *
+     * @return Resolver<static>|null
+     * @internal This method is used by the package during initialization to get
+     *           the models to resolve the Elasticsearch connection. You won't
+     *           need it during normal operation. It may change at any time.
+     */
+    public static function getConnectionResolver(): Resolver|null
+    {
+        return static::$resolver;
+    }
+
+    /**
+     * Get excluded fields
+     *
+     * @return string[]
+     */
+    public function getExcluded(): array
+    {
+        return $this->excluded ?: [];
     }
 
     /**
@@ -355,14 +404,10 @@ class Model implements Arrayable,
      * @param string|null $field
      *
      * @return mixed
-     * @throws DecryptException
-     * @throws InvalidCastException
-     * @throws InvalidFormatException
-     * @throws JsonException
      */
-    public function getHighlights(?string $field = null)
+    public function getHighlights(string|null $field = null): mixed
     {
-        $highlights = $this->getAttribute('highlight');
+        $highlights = $this->_highlight ?? [];
 
         if ($field && array_key_exists($field, $highlights)) {
             return $highlights[$field];
@@ -375,12 +420,9 @@ class Model implements Arrayable,
      * Retrieves the model key
      *
      * @return string|null
-     * @throws DecryptException
      * @throws InvalidCastException
-     * @throws InvalidFormatException
-     * @throws JsonException
      */
-    public function getId(): ?string
+    public function getId(): string|null
     {
         $id = $this->getAttribute(self::FIELD_ID);
 
@@ -388,11 +430,21 @@ class Model implements Arrayable,
     }
 
     /**
+     * Get included fields
+     *
+     * @return string[]
+     */
+    public function getIncluded(): array
+    {
+        return $this->included ?: [];
+    }
+
+    /**
      * Get index name
      *
      * @return string|null
      */
-    public function getIndex(): ?string
+    public function getIndex(): string|null
     {
         return $this->index;
     }
@@ -404,7 +456,7 @@ class Model implements Arrayable,
      *
      * @return void
      */
-    public function setIndex(?string $index): void
+    public function setIndex(string|null $index): void
     {
         $this->index = $index;
     }
@@ -413,12 +465,9 @@ class Model implements Arrayable,
      * Get the value of the model's primary key.
      *
      * @return string|null
-     * @throws DecryptException
      * @throws InvalidCastException
-     * @throws InvalidFormatException
-     * @throws JsonException
      */
-    public function getKey(): ?string
+    public function getKey(): string|null
     {
         return $this->getAttribute(self::FIELD_ID);
     }
@@ -426,7 +475,7 @@ class Model implements Arrayable,
     /**
      * @inheritDoc
      */
-    public function getQueueableConnection(): ?string
+    public function getQueueableConnection(): string|null
     {
         return $this->getConnectionName();
     }
@@ -434,12 +483,9 @@ class Model implements Arrayable,
     /**
      * @inheritDoc
      * @return string|null
-     * @throws DecryptException
      * @throws InvalidCastException
-     * @throws InvalidFormatException
-     * @throws JsonException
      */
-    public function getQueueableId(): ?string
+    public function getQueueableId(): string|null
     {
         return $this->getKey();
     }
@@ -482,12 +528,8 @@ class Model implements Arrayable,
      * @param string $key
      *
      * @return mixed
-     * @throws DecryptException
-     * @throws InvalidCastException
-     * @throws InvalidFormatException
-     * @throws JsonException
      */
-    public function getResultMetadataValue(string $key)
+    public function getResultMetadataValue(string $key): mixed
     {
         return array_key_exists($key, $this->resultMetadata)
             ? $this->transformModelValue($key, $this->resultMetadata[$key])
@@ -497,12 +539,9 @@ class Model implements Arrayable,
     /**
      * @inheritDoc
      * @return float|mixed|string|null
-     * @throws DecryptException
      * @throws InvalidCastException
-     * @throws InvalidFormatException
-     * @throws JsonException
      */
-    public function getRouteKey()
+    public function getRouteKey(): mixed
     {
         return $this->getAttribute($this->getRouteKeyName());
     }
@@ -524,32 +563,32 @@ class Model implements Arrayable,
      * @param mixed       $value
      * @param string|null $field
      *
-     * @return Model|null
-     * @throws InvalidArgumentException
+     * @return static|null
+     * @throws CacheException
      * @psalm-suppress ImplementedReturnTypeMismatch
      */
     final public function resolveChildRouteBinding(
         $childType,
         $value,
         $field = null
-    ): ?self {
+    ): static|null {
         return $this->resolveRouteBinding($value, $field);
     }
 
     /**
      * Resolves a route binding to a model instance. Note that the interface
-     * specifies Eloquent models in its documentation comment,
-     * a rather short-sighted decision.
-     * Route bindings using Elasticsearch models should work fine regardless.
+     * specifies Eloquent models in its documentation comment, but alas, there
+     * is no model interface available.
+     * Route bindings using Elasticsearch models work fine regardless.
      *
      * @param mixed       $value
      * @param string|null $field
      *
-     * @return Model|null
-     * @throws InvalidArgumentException
+     * @return static|null
+     * @throws CacheException
      * @psalm-suppress ImplementedReturnTypeMismatch
      */
-    public function resolveRouteBinding($value, $field = null): ?self
+    public function resolveRouteBinding($value, $field = null): static|null
     {
         return $this
             ->newQuery()
@@ -563,13 +602,9 @@ class Model implements Arrayable,
      * Retrieves the result score.
      *
      * @return float|null
-     * @throws DecryptException
-     * @throws InvalidCastException
-     * @throws InvalidFormatException
-     * @throws JsonException
      * @internal
      */
-    public function getScore(): ?float
+    public function getScore(): float|null
     {
         return $this->getResultMetadataValue('_score');
     }
@@ -577,106 +612,25 @@ class Model implements Arrayable,
     /**
      * Get selectable fields
      *
-     * @return array
+     * @return string[]
+     * @deprecated Use getIncluded instead
      */
+    #[Deprecated(replacement: '%class%->getIncluded()')]
     public function getSelectable(): array
     {
-        return $this->selectable ?: [];
-    }
-
-    /**
-     * Retrieves the document mapping type.
-     *
-     * @return string|null
-     * @deprecated Mapping types are deprecated as of Elasticsearch 7.0.0
-     * @see        https://www.elastic.co/guide/en/elasticsearch/reference/7.10/removal-of-types.html
-     */
-    #[Deprecated('Mapping types are deprecated as of Elasticsearch 7.0.0')]
-    public function getType(): ?string
-    {
-        return $this->type;
-    }
-
-    /**
-     * Sets the document mapping type.
-     *
-     * @param string|null $type
-     *
-     * @return void
-     * @deprecated Mapping types are deprecated as of Elasticsearch 7.0.0
-     * @see        https://www.elastic.co/guide/en/elasticsearch/reference/7.10/removal-of-types.html
-     */
-    #[Deprecated(reason: 'Mapping types are deprecated as of Elasticsearch 7.0.0')]
-    public function setType(?string $type): void
-    {
-        $this->type = $type;
+        return $this->getIncluded();
     }
 
     /**
      * Get selectable fields
      *
-     * @return array
+     * @return string[]
+     * @deprecated Use getExcluded instead
      */
+    #[Deprecated(replacement: '%class%->getExcluded()')]
     public function getUnSelectable(): array
     {
-        return $this->unselectable ?: [];
-    }
-
-    /**
-     * Set a given attribute on the model.
-     *
-     * @param string $key
-     * @param mixed  $value
-     *
-     * @return mixed
-     * @throws DecryptException
-     * @throws InvalidCastException
-     * @throws InvalidFormatException
-     * @throws JsonException
-     * @throws EncryptException
-     * @throws JsonEncodingException
-     */
-    public function setAttribute(string $key, $value)
-    {
-        // First we will check for the presence of a mutator for the set
-        // operation which simply lets the developers tweak the attribute as it
-        // is set on the model, such as "json_encoding" an listing of data
-        // for storage.
-        if ($this->hasSetMutator($key)) {
-            return $this->setMutatedAttributeValue($key, $value);
-        }
-
-        if ($value && $this->isDateAttribute($key)) {
-            $value = $this->fromDateTime($value);
-        }
-
-        // If an attribute is listed as a "date", we'll convert it from a
-        // DateTime instance into a form proper for storage on the index.
-        // We will auto set the values.
-        if ($this->isClassCastable($key)) {
-            $this->setClassCastableAttribute($key, $value);
-
-            return $this;
-        }
-
-        if ( ! is_null($value) && $this->isJsonCastable($key)) {
-            $value = $this->castAttributeAsJson($key, $value);
-        }
-
-        // If this attribute contains a JSON ->, we'll set the proper value in
-        // the attribute's underlying array. This takes care of properly nesting
-        // an attribute in the array's value in the case of deeply nested items.
-        if (Str::contains($key, '->')) {
-            return $this->fillJsonAttribute($key, $value);
-        }
-
-        if ( ! is_null($value) && $this->isEncryptedCastable($key)) {
-            $value = $this->castAttributeAsEncryptedString($key, $value);
-        }
-
-        $this->attributes[$key] = $value;
-
-        return $this;
+        return $this->getExcluded();
     }
 
     /**
@@ -689,16 +643,27 @@ class Model implements Arrayable,
      *             the next major version.
      * @see        Model::setConnectionName()
      */
-    #[Deprecated(replacement: '%class%->setConnectionName(%parameter0%)')]
     public function setConnection(string $connectionName): void
     {
         $this->setConnectionName($connectionName);
     }
 
     /**
+     * Set current connection name
+     *
+     * @param string|null $connectionName
+     *
+     * @return void
+     */
+    public function setConnectionName(string|null $connectionName): void
+    {
+        $this->connection = $connectionName;
+    }
+
+    /**
      * Set the connection resolver instance.
      *
-     * @param Resolver $resolver
+     * @param Resolver<static> $resolver
      *
      * @return void
      * @internal This method is used by the package during initialization to get
@@ -708,20 +673,6 @@ class Model implements Arrayable,
     public static function setConnectionResolver(Resolver $resolver): void
     {
         static::$resolver = $resolver;
-    }
-
-    /**
-     * Set the date format used by the model.
-     *
-     * @param string $format
-     *
-     * @return static
-     */
-    public function setDateFormat(string $format): self
-    {
-        $this->dateFormat = $format;
-
-        return $this;
     }
 
     /**
@@ -742,15 +693,19 @@ class Model implements Arrayable,
      *
      * @param string|null $scrollId
      *
-     * @return Collection
+     * @return Collection<static>
+     * @throws CacheException
      */
-    public static function all(?string $scrollId = null): Collection
+    public static function all(string|null $scrollId = null): Collection
     {
-        return static::query()->get($scrollId);
+        return static
+            ::query()
+            ->all()
+            ->get($scrollId);
     }
 
     /**
-     * Clear the list of booted models so they will be re-booted.
+     * Clear the list of booted models, so they will be re-booted.
      *
      * @return void
      */
@@ -767,31 +722,34 @@ class Model implements Arrayable,
      * @param string|null $id
      *
      * @return static
-     * @psalm-suppress LessSpecificReturnStatement
+     * @throws InvalidCastException
+     * @throws JsonEncodingException
      */
-    public static function create(array $attributes, ?string $id = null): self
-    {
+    public static function create(
+        array $attributes,
+        string|null $id = null
+    ): self {
         $metadata = [];
+
         if ( ! is_null($id)) {
             $metadata['_id'] = $id;
         }
 
-        return tap(
-            (new static())->newInstance($attributes, $metadata),
-            static function ($instance) {
-                $instance->save();
-            }
-        );
+        return tap((new static())->newInstance(
+            $attributes,
+            $metadata
+        ), static fn(Model $instance) => $instance->save());
     }
 
     /**
      * Destroy the models for the given IDs.
      *
-     * @param BaseCollection|array|int|string $ids
+     * @param array|int|string|BaseCollection $ids
      *
      * @return int
+     * @throws CacheException
      */
-    public static function destroy($ids): int
+    public static function destroy(array|int|string|BaseCollection $ids): int
     {
         if ($ids instanceof BaseCollection) {
             $ids = $ids->all();
@@ -828,9 +786,9 @@ class Model implements Arrayable,
      * @param string $key
      *
      * @return static|null
-     * @psalm-suppress MismatchingDocblockReturnType
+     * @throws CacheException
      */
-    public static function find(string $key): ?self
+    public static function find(string $key): static|null
     {
         return static
             ::query()
@@ -846,9 +804,9 @@ class Model implements Arrayable,
      *
      * @return static
      * @throws DocumentNotFoundException
-     * @psalm-suppress MismatchingDocblockReturnType
+     * @throws CacheException
      */
-    public static function findOrFail(string $key): self
+    public static function findOrFail(string $key): static
     {
         $result = static::find($key);
 
@@ -865,9 +823,9 @@ class Model implements Arrayable,
     /**
      * Begin querying the model.
      *
-     * @return Query
+     * @return Builder<static>
      */
-    public static function query(): Query
+    public static function query(): Builder
     {
         return (new static())->newQuery();
     }
@@ -877,14 +835,21 @@ class Model implements Arrayable,
      *
      * @param string|null $connection
      *
-     * @return Connection
+     * @return Connection<static>
      * @internal This method is used by the package during initialization to get
      *           the models to resolve the Elasticsearch connection. You won't
      *           need it during normal operation. It may change at any time.
      */
     public static function resolveConnection(
-        ?string $connection = null
+        string|null $connection = null
     ): Connection {
+        assert(
+            static::$resolver !== null,
+            'Connection Resolver is not set on the model: To be ' .
+            'able to work with the Elasticsearch index, models need a way to ' .
+            'resolve connection instances'
+        );
+
         return static::$resolver->connection($connection);
     }
 
@@ -912,13 +877,14 @@ class Model implements Arrayable,
     }
 
     /**
-     * Boot all bootable traits on the model.
+     * Boot all the bootable traits on the model.
      *
      * @return void
      */
     protected static function bootTraits(): void
     {
         $class = static::class;
+
         $booted = [];
 
         static::$traitInitializers[$class] = [];
@@ -939,9 +905,7 @@ class Model implements Arrayable,
                 $class,
                 $method = 'initialize' . class_basename($trait)
             )) {
-                /** @noinspection UnsupportedStringOffsetOperationsInspection */
                 static::$traitInitializers[$class][] = $method;
-
                 static::$traitInitializers[$class] = array_unique(
                     static::$traitInitializers[$class]
                 );
@@ -978,7 +942,7 @@ class Model implements Arrayable,
      * @return mixed
      * @throws BadMethodCallException
      */
-    public function __call(string $method, array $parameters)
+    public function __call(string $method, array $parameters): mixed
     {
         return $this->forwardCallTo(
             $this->newQuery(),
@@ -992,13 +956,10 @@ class Model implements Arrayable,
      *
      * @param string $name
      *
-     * @return mixed|null
-     * @throws DecryptException
+     * @return mixed
      * @throws InvalidCastException
-     * @throws InvalidFormatException
-     * @throws JsonException
      */
-    public function __get(string $name)
+    public function __get(string $name): mixed
     {
         return $this->getAttribute($name);
     }
@@ -1007,17 +968,13 @@ class Model implements Arrayable,
      * Handle model properties setter
      *
      * @param string $name
-     * @param        $value
+     * @param mixed  $value
      *
      * @return void
-     * @throws DecryptException
-     * @throws EncryptException
      * @throws InvalidCastException
-     * @throws InvalidFormatException
      * @throws JsonEncodingException
-     * @throws JsonException
      */
-    public function __set(string $name, $value): void
+    public function __set(string $name, mixed $value): void
     {
         $this->setAttribute($name, $value);
     }
@@ -1028,10 +985,7 @@ class Model implements Arrayable,
      * @param string $key
      *
      * @return bool
-     * @throws DecryptException
      * @throws InvalidCastException
-     * @throws InvalidFormatException
-     * @throws JsonException
      */
     public function __isset(string $key): bool
     {
@@ -1049,7 +1003,7 @@ class Model implements Arrayable,
      *
      * @return void
      */
-    public function __unset(string $key)
+    public function __unset(string $key): void
     {
         $this->offsetUnset($key);
     }
@@ -1061,20 +1015,33 @@ class Model implements Arrayable,
      * @param array  $parameters
      *
      * @return mixed
+     * @throws BadMethodCallException
      */
-    public function callNamedScope(string $scope, array $parameters = [])
-    {
-        return $this->{'scope' . ucfirst($scope)}(...$parameters);
+    public function callNamedScope(
+        string $scope,
+        array $parameters = []
+    ): mixed {
+        $methodName = 'scope' . ucfirst($scope);
+
+        if ( ! method_exists($this, $methodName)) {
+            throw new BadMethodCallException(sprintf(
+                    'No such scope: %s: Attempted to call scope ' .
+                    'handler method %s on %s',
+                    $scope,
+                    $methodName,
+                    static::class
+                )
+            );
+        }
+
+        return $this->{$methodName}(...$parameters);
     }
 
     /**
      * Delete model record
      *
      * @return void
-     * @throws DecryptException
      * @throws InvalidCastException
-     * @throws InvalidFormatException
-     * @throws JsonException
      */
     public function delete(): void
     {
@@ -1116,12 +1083,8 @@ class Model implements Arrayable,
      *
      * @return static
      *
-     * @throws DecryptException
-     * @throws EncryptException
      * @throws InvalidCastException
-     * @throws InvalidFormatException
      * @throws JsonEncodingException
-     * @throws JsonException
      * @throws MassAssignmentException
      */
     public function fill(array $attributes): self
@@ -1151,12 +1114,8 @@ class Model implements Arrayable,
      * @param array $attributes
      *
      * @return static
-     * @throws DecryptException
-     * @throws EncryptException
      * @throws InvalidCastException
-     * @throws InvalidFormatException
      * @throws JsonEncodingException
-     * @throws JsonException
      * @throws MassAssignmentException
      */
     public function forceFill(array $attributes): self
@@ -1187,19 +1146,16 @@ class Model implements Arrayable,
      * @param static|null $model
      *
      * @return bool
-     * @throws DecryptException
      * @throws InvalidCastException
-     * @throws InvalidFormatException
-     * @throws JsonException
-     * @noinspection PhpDeprecationInspection
      */
-    public function is(?self $model): bool
+    public function is(self|null $model): bool
     {
-        return ! is_null($model) &&
-               $this->getId() === $model->getId() &&
-               $this->getType() === $model->getType() &&
-               $this->getIndex() === $model->getIndex() &&
-               $this->getConnectionName() === $model->getConnectionName();
+        return (
+            ! is_null($model) &&
+            $this->getId() === $model->getId() &&
+            $this->getIndex() === $model->getIndex() &&
+            $this->getConnectionName() === $model->getConnectionName()
+        );
     }
 
     /**
@@ -1208,22 +1164,15 @@ class Model implements Arrayable,
      * @param static|null $model
      *
      * @return bool
-     * @throws DecryptException
      * @throws InvalidCastException
-     * @throws InvalidFormatException
-     * @throws JsonException
      */
-    public function isNot(?self $model): bool
+    public function isNot(self|null $model): bool
     {
         return ! $this->is($model);
     }
 
     /**
      * @inheritDoc
-     * @throws DecryptException
-     * @throws InvalidCastException
-     * @throws InvalidFormatException
-     * @throws JsonException
      */
     public function jsonSerialize(): array
     {
@@ -1252,17 +1201,14 @@ class Model implements Arrayable,
      * @param array       $metadata   Query result metadata
      * @param bool        $exists     Whether the document exists
      * @param string|null $index      Name of the index the document lives in
-     * @param string|null $type       (Deprecated) Mapping type of the document
      *
      * @return static
-     * @noinspection PhpDeprecationInspection
      */
     public function newInstance(
         array $attributes = [],
         array $metadata = [],
         bool $exists = false,
-        ?string $index = null,
-        ?string $type = null
+        string|null $index = null
     ): self {
         $model = new static([], $exists);
 
@@ -1270,7 +1216,6 @@ class Model implements Arrayable,
         $model->setConnectionName($this->getConnectionName());
         $model->setResultMetadata($metadata);
         $model->setIndex($index ?? $this->getIndex());
-        $model->setType($type ?? $this->getType());
         $model->mergeCasts($this->casts);
 
         $model->fireModelEvent('retrieved', false);
@@ -1281,10 +1226,9 @@ class Model implements Arrayable,
     /**
      * Get a new query builder scoped to the current model.
      *
-     * @return Query
-     * @noinspection PhpDeprecationInspection
+     * @return Builder<static>
      */
-    public function newQuery(): Query
+    public function newQuery(): Builder
     {
         $query = $this->registerGlobalScopes($this->newQueryBuilder());
 
@@ -1294,16 +1238,12 @@ class Model implements Arrayable,
             $query->index($index);
         }
 
-        if ($type = $this->getType()) {
-            $query->type($type);
+        if ($fields = $this->getIncluded()) {
+            $query->include(...$fields);
         }
 
-        if ($fields = $this->getSelectable()) {
-            $query->select($fields);
-        }
-
-        if ($fields = $this->getUnSelectable()) {
-            $query->unselect($fields);
+        if ($fields = $this->getExcluded()) {
+            $query->exclude(...$fields);
         }
 
         return $query;
@@ -1315,12 +1255,9 @@ class Model implements Arrayable,
      * @param mixed $offset
      *
      * @return bool
-     * @throws DecryptException
      * @throws InvalidCastException
-     * @throws InvalidFormatException
-     * @throws JsonException
      */
-    public function offsetExists($offset): bool
+    public function offsetExists(mixed $offset): bool
     {
         return ! is_null($this->getAttribute($offset));
     }
@@ -1331,13 +1268,9 @@ class Model implements Arrayable,
      * @param mixed $offset
      *
      * @return mixed
-     * @throws DecryptException
      * @throws InvalidCastException
-     * @throws InvalidFormatException
-     * @throws JsonException
      */
-    #[ReturnTypeWillChange]
-    public function offsetGet($offset)
+    public function offsetGet(mixed $offset): mixed
     {
         return $this->getAttribute($offset);
     }
@@ -1349,14 +1282,10 @@ class Model implements Arrayable,
      * @param mixed $value
      *
      * @return void
-     * @throws DecryptException
-     * @throws EncryptException
      * @throws InvalidCastException
-     * @throws InvalidFormatException
      * @throws JsonEncodingException
-     * @throws JsonException
      */
-    public function offsetSet($offset, $value): void
+    public function offsetSet(mixed $offset, mixed $value): void
     {
         $this->setAttribute($offset, $value);
     }
@@ -1368,7 +1297,7 @@ class Model implements Arrayable,
      *
      * @return void
      */
-    public function offsetUnset($offset): void
+    public function offsetUnset(mixed $offset): void
     {
         unset($this->attributes[$offset]);
     }
@@ -1376,11 +1305,11 @@ class Model implements Arrayable,
     /**
      * Register the global scopes for this builder instance.
      *
-     * @param Query $query
+     * @param Builder<static> $query
      *
-     * @return Query
+     * @return Builder<static>
      */
-    public function registerGlobalScopes(Query $query): Query
+    public function registerGlobalScopes(Builder $query): Builder
     {
         foreach ($this->getGlobalScopes() as $identifier => $scope) {
             $query->withGlobalScope($identifier, $scope);
@@ -1419,12 +1348,8 @@ class Model implements Arrayable,
      * Save the model to the index.
      *
      * @return static
-     * @throws DecryptException
-     * @throws EncryptException
      * @throws InvalidCastException
-     * @throws InvalidFormatException
      * @throws JsonEncodingException
-     * @throws JsonException
      */
     public function save(): self
     {
@@ -1468,12 +1393,8 @@ class Model implements Arrayable,
      * Save the model to the index without raising any events.
      *
      * @return static
-     * @throws DecryptException
-     * @throws EncryptException
      * @throws InvalidCastException
-     * @throws InvalidFormatException
      * @throws JsonEncodingException
-     * @throws JsonException
      */
     public function saveQuietly(): self
     {
@@ -1486,10 +1407,6 @@ class Model implements Arrayable,
      * Get model as array
      *
      * @return array
-     * @throws DecryptException
-     * @throws InvalidCastException
-     * @throws InvalidFormatException
-     * @throws JsonException
      */
     public function toArray(): array
     {
@@ -1502,9 +1419,6 @@ class Model implements Arrayable,
      * @param int $options
      *
      * @return string
-     * @throws DecryptException
-     * @throws InvalidCastException
-     * @throws InvalidFormatException
      * @throws JsonException
      */
     public function toJson($options = 0): string
@@ -1560,13 +1474,10 @@ class Model implements Arrayable,
     /**
      * Get the primary key value for a save query.
      *
-     * @return string
-     * @throws DecryptException
+     * @return string|null
      * @throws InvalidCastException
-     * @throws InvalidFormatException
-     * @throws JsonException
      */
-    protected function getKeyForSaveQuery(): ?string
+    protected function getKeyForSaveQuery(): string|null
     {
         return $this->original[self::FIELD_ID] ?? $this->getKey();
     }
@@ -1586,18 +1497,14 @@ class Model implements Arrayable,
     /**
      * Insert the given attributes and set the ID on the model.
      *
-     * @param Query $query
-     * @param array $attributes
+     * @param Builder<static> $query
+     * @param array           $attributes
      *
      * @return void
-     * @throws DecryptException
-     * @throws EncryptException
      * @throws InvalidCastException
-     * @throws InvalidFormatException
      * @throws JsonEncodingException
-     * @throws JsonException
      */
-    protected function insertAndSetId(Query $query, array $attributes): void
+    protected function insertAndSetId(Builder $query, array $attributes): void
     {
         $result = $query->insert($attributes);
 
@@ -1605,17 +1512,15 @@ class Model implements Arrayable,
             $this->setIndex($result->_index);
         }
 
-        if (isset($result->_type)) {
-            $this->setAttribute('_type', $result->_type);
-        }
-
-        $this->setAttribute(self::FIELD_ID, $result->_id);
+        $this->setAttribute(self::FIELD_ID, $result['_id']);
     }
 
     /**
      * Get a new query builder instance for the connection.
+     *
+     * @return Builder<static>
      */
-    protected function newQueryBuilder(): Query
+    protected function newQueryBuilder(): Builder
     {
         return static
             ::resolveConnection($this->getConnectionName())
@@ -1626,10 +1531,7 @@ class Model implements Arrayable,
      * Perform the actual delete query on this model instance.
      *
      * @return void
-     * @throws DecryptException
      * @throws InvalidCastException
-     * @throws InvalidFormatException
-     * @throws JsonException
      */
     protected function performDeleteOnModel(): void
     {
@@ -1641,17 +1543,13 @@ class Model implements Arrayable,
     /**
      * Perform a model insert operation.
      *
-     * @param Query $query
+     * @param Builder<static> $query
      *
      * @return bool
-     * @throws DecryptException
-     * @throws EncryptException
      * @throws InvalidCastException
-     * @throws InvalidFormatException
      * @throws JsonEncodingException
-     * @throws JsonException
      */
-    protected function performInsert(Query $query): bool
+    protected function performInsert(Builder $query): bool
     {
         if ($this->fireModelEvent('creating') === false) {
             return false;
@@ -1664,8 +1562,7 @@ class Model implements Arrayable,
                 return true;
             }
 
-            $result = $query->insert($attributes, $id);
-            $this->setAttribute('_type', $result->_type ?? null);
+            $query->insert($attributes, $id);
         } else {
             $this->insertAndSetId($query, $attributes);
         }
@@ -1686,15 +1583,12 @@ class Model implements Arrayable,
     /**
      * Perform a model update operation.
      *
-     * @param Query $query
+     * @param Builder<static> $query
      *
      * @return bool
-     * @throws DecryptException
      * @throws InvalidCastException
-     * @throws InvalidFormatException
-     * @throws JsonException
      */
-    protected function performUpdate(Query $query): bool
+    protected function performUpdate(Builder $query): bool
     {
         // If the updating event returns false, we will cancel the update
         // operation so developers can hook Validation systems into their models
@@ -1733,8 +1627,7 @@ class Model implements Arrayable,
      * @return mixed
      * @deprecated This method will be removed in the next major version.
      */
-    #[Deprecated('This method will be removed in the next major version.')]
-    protected function setAttributeType(string $name, $value)
+    protected function setAttributeType(string $name, mixed $value): mixed
     {
         $castTypes = [
             'boolean',
@@ -1766,49 +1659,15 @@ class Model implements Arrayable,
     /**
      * Set the keys for a save update query.
      *
-     * @param Query $query
+     * @param Builder<static> $query
      *
-     * @return Query
-     * @throws DecryptException
+     * @return Builder<static>
      * @throws InvalidCastException
-     * @throws InvalidFormatException
-     * @throws JsonException
      */
-    protected function setKeysForSaveQuery(Query $query): Query
+    protected function setKeysForSaveQuery(Builder $query): Builder
     {
         $query->id($this->getKeyForSaveQuery());
 
         return $query;
-    }
-
-    /**
-     * Transform a raw model value using mutators, casts, etc.
-     *
-     * @param string $key
-     * @param mixed  $value
-     *
-     * @return mixed
-     * @throws InvalidCastException
-     * @throws JsonException
-     * @throws InvalidFormatException
-     * @throws DecryptException
-     */
-    protected function transformModelValue(string $key, $value)
-    {
-        // If the attribute has a get mutator, we will call that, then return
-        // what it returns as the value, which is useful for transforming values
-        // on  retrieval from the model to a form that is more useful for usage.
-        if ($this->hasGetMutator($key)) {
-            return $this->mutateAttribute($key, $value);
-        }
-
-        // If the attribute exists within the cast array, we will convert it to
-        // an appropriate native PHP type dependent upon the associated value
-        // given with the key in the pair. Dayle made this comment line up.
-        if ($this->hasCast($key)) {
-            return $this->castAttribute($key, $value);
-        }
-
-        return $value;
     }
 }

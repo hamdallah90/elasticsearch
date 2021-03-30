@@ -1,10 +1,12 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Matchory\Elasticsearch\Commands;
 
 use Illuminate\Console\Command;
 use InvalidArgumentException;
-use Matchory\Elasticsearch\Connection;
+use Matchory\Elasticsearch\Interfaces\ConnectionResolverInterface;
 use RuntimeException;
 
 use function app;
@@ -12,8 +14,21 @@ use function array_keys;
 use function config;
 use function is_null;
 
+/**
+ * Drop Index Command
+ *
+ * @bundle Matchory\Elasticsearch
+ * @psalm-suppress PropertyNotSetInConstructor
+ */
 class DropIndexCommand extends Command
 {
+    /**
+     * The console command description.
+     *
+     * @var string
+     */
+    protected $description = 'Drop an index';
+
     /**
      * The name and signature of the console command.
      *
@@ -23,24 +38,15 @@ class DropIndexCommand extends Command
                             {--connection= : Elasticsearch connection}
                             {--force : Drop indices without any confirmation messages}';
 
-    /**
-     * The console command description.
-     *
-     * @var string
-     */
-    protected $description = 'Drop an index';
-
-    /**
-     * ES object
-     *
-     * @var Connection
-     */
-    protected $es;
+    private ConnectionResolverInterface $connectionResolver;
 
     public function __construct()
     {
         parent::__construct();
-        $this->es = app("es");
+
+        /** @var ConnectionResolverInterface $resolver */
+        $resolver = app(ConnectionResolverInterface::class);
+        $this->connectionResolver = $resolver;
     }
 
     /**
@@ -52,9 +58,11 @@ class DropIndexCommand extends Command
     public function handle(): void
     {
         $connectionName = $this->option("connection") ?: config('es.default');
-        $connection = $this->es->connection($connectionName);
-        $force = $this->option("force") ?: 0;
-        $client = $connection->raw();
+        $force = (int)($this->option('force') ?: 0);
+        $client = $this->connectionResolver
+            ->connection($connectionName)
+            ->getClient();
+
         $indices = ! is_null($this->argument('index'))
             ? [$this->argument('index')]
             : array_keys(config('es.indices'));

@@ -1,4 +1,7 @@
 <?php
+
+declare(strict_types=1);
+
 /**
  * @var Pagination $paginator
  * @var string[][] $elements
@@ -10,26 +13,24 @@ use Matchory\Elasticsearch\Pagination;
     <ul class="pagination">
 
         <?php if ($paginator->onFirstPage()): ?>
-            <li class="page-item disabled">
-                <span class="page-link">&laquo;</span>
+            <li class="disabled">
+                <span>&laquo;</span>
             </li>
         <?php else: ?>
-            <li class="page-item">
-                <a class="page-link"
-                   href="<?php echo $paginator->previousPageUrl() ?>"
+            <li>
+                <a href="<?= $paginator->previousPageUrl() ?>"
                    rel="prev">&laquo;</a>
             </li>
-            <?php endif ?>
+        <?php endif ?>
 
         <?php if ($paginator->hasMorePages()): ?>
-            <li class="page-item">
-                <a class="page-link"
-                   href="<?php echo $paginator->nextPageUrl() ?>"
+            <li>
+                <a href="<?= $paginator->nextPageUrl() ?>"
                    rel="next">&raquo;</a>
             </li>
         <?php else: ?>
-            <li class="page-item disabled">
-                <span class="page-link">&raquo;</span>
+            <li class="disabled">
+                <span>&raquo;</span>
             </li>
         <?php endif ?>
     </ul>

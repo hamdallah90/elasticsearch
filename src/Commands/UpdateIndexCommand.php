@@ -1,26 +1,26 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Matchory\Elasticsearch\Commands;
 
 use Illuminate\Console\Command;
-use InvalidArgumentException;
-use Matchory\Elasticsearch\Connection;
-use RuntimeException;
+use Matchory\Elasticsearch\Interfaces\ConnectionResolverInterface;
 
-use function app;
 use function array_keys;
+use function assert;
 use function config;
 use function is_null;
+use function is_string;
 
+/**
+ * Update Index Command
+ *
+ * @bundle Matchory\Elasticsearch
+ * @psalm-suppress PropertyNotSetInConstructor
+ */
 class UpdateIndexCommand extends Command
 {
-    /**
-     * The name and signature of the console command.
-     *
-     * @var string
-     */
-    protected $signature = 'es:indices:update {index?}{--connection= : Elasticsearch connection}';
-
     /**
      * The console command description.
      *
@@ -29,29 +29,26 @@ class UpdateIndexCommand extends Command
     protected $description = 'Update index using defined setting and mapping in config file';
 
     /**
-     * ES object
+     * The name and signature of the console command.
      *
-     * @var Connection
+     * @var string
      */
-    protected $es;
-
-    public function __construct()
-    {
-        parent::__construct();
-        $this->es = app('es');
-    }
+    protected $signature = 'es:indices:update {index?}{--connection= : Elasticsearch connection}';
 
     /**
      * Execute the console command.
      *
-     * @throws InvalidArgumentException
-     * @throws RuntimeException
+     * @param ConnectionResolverInterface $resolver
      */
-    public function handle(): void
+    public function handle(ConnectionResolverInterface $resolver): void
     {
-        $connectionName = $this->option("connection") ?: config('es.default');
-        $connection = $this->es->connection($connectionName);
-        $client = $connection->raw();
+        $connectionName = $this->option('connection') ?: config('es.default');
+        assert(is_string($connectionName));
+        $client = $resolver
+            ->connection($connectionName)
+            ->getClient();
+
+        /** @var string[] $indices */
         $indices = ! is_null($this->argument('index'))
             ? [$this->argument('index')]
             : array_keys(config('es.indices'));
@@ -82,7 +79,7 @@ class UpdateIndexCommand extends Command
                         [
                             'remove' => [
                                 'index' => $index,
-                                'alias' => "*",
+                                'alias' => '*',
                             ],
                         ],
                     ],
@@ -100,7 +97,7 @@ class UpdateIndexCommand extends Command
                     );
 
                     $client->indices()->updateAliases([
-                        "body" => [
+                        'body' => [
                             'actions' => [
                                 [
                                     'add' => [

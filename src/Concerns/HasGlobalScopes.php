@@ -28,17 +28,18 @@ trait HasGlobalScopes
     /**
      * @var array<class-string, array<string, Closure|ScopeInterface>>
      */
-    protected static $globalScopes = [];
+    protected static array $globalScopes = [];
 
     /**
      * Get a global scope registered with the model.
      *
-     * @param ScopeInterface|string $scope
+     * @param string|ScopeInterface $scope
      *
      * @return ScopeInterface|Closure|null
      */
-    public static function getGlobalScope($scope)
-    {
+    public static function getGlobalScope(
+        ScopeInterface|string $scope
+    ): ScopeInterface|Closure|null {
         if (is_string($scope)) {
             return static::$globalScopes[static::class][$scope] ?? null;
         }
@@ -49,7 +50,8 @@ trait HasGlobalScopes
     /**
      * Get the global scopes for this class instance.
      *
-     * @return array<string, Closure|ScopeInterface>
+     * @return array<string, ScopeInterface>
+     * @psalm-return array<string, Closure|ScopeInterface>
      */
     public function getGlobalScopes(): array
     {
@@ -59,7 +61,7 @@ trait HasGlobalScopes
     /**
      * Register a new global scope on the model.
      *
-     * @param ScopeInterface|Closure|string $scope
+     * @param string|Closure|ScopeInterface $scope
      * @param Closure|null                  $implementation
      *
      * @return Closure|ScopeInterface
@@ -67,34 +69,36 @@ trait HasGlobalScopes
      * @throws InvalidArgumentException
      */
     public static function addGlobalScope(
-        $scope,
-        ?Closure $implementation = null
-    ) {
-        if (is_string($scope) && ! is_null($implementation)) {
-            return static::$globalScopes[static::class][$scope] = $implementation;
-        }
+        ScopeInterface|string|Closure $scope,
+        Closure|null $implementation = null
+    ): ScopeInterface|Closure {
+        return match (true) {
+            (is_string($scope) && ! is_null($implementation)) => (
+            static::$globalScopes[static::class][$scope] = $implementation
+            ),
 
-        if ($scope instanceof Closure) {
-            return static::$globalScopes[static::class][spl_object_hash($scope)] = $scope;
-        }
+            $scope instanceof Closure => (
+            static::$globalScopes[static::class][spl_object_hash($scope)] = $scope
+            ),
 
-        if ($scope instanceof ScopeInterface) {
-            return static::$globalScopes[static::class][get_class($scope)] = $scope;
-        }
+            $scope instanceof ScopeInterface => (
+            static::$globalScopes[static::class][get_class($scope)] = $scope
+            ),
 
-        throw new InvalidArgumentException(
-            'Global scopes must be callable or implement ScopeInterface'
-        );
+            default => throw new InvalidArgumentException(
+                'Global scopes must be callable or implement ScopeInterface'
+            )
+        };
     }
 
     /**
      * Determine if a model has a global scope.
      *
-     * @param ScopeInterface|string $scope
+     * @param string|ScopeInterface $scope
      *
      * @return bool
      */
-    public static function hasGlobalScope($scope): bool
+    public static function hasGlobalScope(ScopeInterface|string $scope): bool
     {
         return (bool)static::getGlobalScope($scope);
     }

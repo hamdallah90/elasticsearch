@@ -11,7 +11,7 @@ use function is_null;
 
 /**
  * Connection Resolver
- * ===================
+ *
  * Simple resolver intended for ad-hoc implementations and tests
  *
  * @package Matchory\Elasticsearch
@@ -19,18 +19,18 @@ use function is_null;
 class ConnectionResolver implements ConnectionResolverInterface
 {
     /**
-     * All of the registered connections.
+     * All the registered connections.
      *
      * @var array<string, ConnectionInterface>
      */
-    protected $connections = [];
+    protected array $connections = [];
 
     /**
      * The default connection name.
      *
      * @var string|null
      */
-    protected $default;
+    protected string|null $default;
 
     /**
      * Create a new connection resolver instance.
@@ -45,13 +45,28 @@ class ConnectionResolver implements ConnectionResolverInterface
     }
 
     /**
+     * Add a connection to the resolver.
+     *
+     * @param string              $name
+     * @param ConnectionInterface $connection
+     *
+     * @return void
+     */
+    public function addConnection(
+        string $name,
+        ConnectionInterface $connection
+    ): void {
+        $this->connections[$name] = $connection;
+    }
+
+    /**
      * Get a connection instance by name.
      *
      * @param string|null $name
      *
      * @return ConnectionInterface
      */
-    public function connection(?string $name = null): ConnectionInterface
+    public function connection(string|null $name = null): ConnectionInterface
     {
         if (is_null($name)) {
             $name = $this->getDefaultConnection();
@@ -80,21 +95,6 @@ class ConnectionResolver implements ConnectionResolverInterface
     public function setDefaultConnection(string $name): void
     {
         $this->default = $name;
-    }
-
-    /**
-     * Add a connection to the resolver.
-     *
-     * @param string              $name
-     * @param ConnectionInterface $connection
-     *
-     * @return void
-     */
-    public function addConnection(
-        string $name,
-        ConnectionInterface $connection
-    ): void {
-        $this->connections[$name] = $connection;
     }
 
     /**

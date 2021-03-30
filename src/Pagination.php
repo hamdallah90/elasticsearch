@@ -25,7 +25,6 @@ class Pagination extends LengthAwarePaginator
      * @param array       $data
      *
      * @return Htmlable
-     * @noinspection PhpUnusedLocalVariableInspection
      */
     public function links($view = 'default', $data = []): Htmlable
     {
@@ -33,25 +32,14 @@ class Pagination extends LengthAwarePaginator
 
         $paginator = $this;
         $elements = $this->elements();
-        $html = '';
-
-        switch ($view) {
-            case 'bootstrap-4':
-                $html = require __DIR__ . '/pagination/bootstrap-4.php';
-                break;
-
-            case 'default':
-                $html = require __DIR__ . '/pagination/default.php';
-                break;
-
-            case 'simple-bootstrap-4':
-                $html = require __DIR__ . '/pagination/simple-bootstrap-4.php';
-                break;
-
-            case 'simple-default':
-                $html = require __DIR__ . '/pagination/simple-default.php';
-                break;
-        }
+        $basePath = __DIR__ . '/../resources/pagination/';
+        $html = match ($view) {
+            'bootstrap-4' => require $basePath . 'bootstrap-4.php',
+            'default' => require $basePath . 'default.php',
+            'simple-bootstrap-4' => require $basePath . 'simple-bootstrap-4.php',
+            'simple-default' => require $basePath . 'simple-default.php',
+            default => '',
+        };
 
         return new HtmlString($html);
     }

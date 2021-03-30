@@ -5,15 +5,15 @@ declare(strict_types=1);
 namespace Matchory\Elasticsearch\Concerns;
 
 use DateTime;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Request;
-use JetBrains\PhpStorm\Deprecated;
 use JsonException;
-use Matchory\Elasticsearch\Classes\Bulk;
+use Matchory\Elasticsearch\Builder;
+use Matchory\Elasticsearch\Bulk;
 use Matchory\Elasticsearch\Collection;
 use Matchory\Elasticsearch\Exceptions\DocumentNotFoundException;
 use Matchory\Elasticsearch\Model;
 use Matchory\Elasticsearch\Pagination;
-use Matchory\Elasticsearch\Query;
 use Psr\SimpleCache\CacheInterface;
 use Psr\SimpleCache\InvalidArgumentException;
 use Throwable;
@@ -21,6 +21,7 @@ use Throwable;
 use function array_diff_key;
 use function array_flip;
 use function array_map;
+use function count;
 use function get_class;
 use function is_callable;
 use function is_null;
@@ -29,6 +30,9 @@ use function serialize;
 
 use const PHP_SAPI;
 
+/**
+ * @template T of Model
+ */
 trait ExecutesQueries
 {
     /**
@@ -36,30 +40,31 @@ trait ExecutesQueries
      *
      * @var string|null
      */
-    protected $cacheKey;
+    protected string|null $cacheKey = null;
 
     /**
      * A cache prefix.
      *
      * @var string
      */
-    protected $cachePrefix = Query::DEFAULT_CACHE_PREFIX;
+    protected string $cachePrefix = Builder::DEFAULT_CACHE_PREFIX;
 
     /**
      * The number of seconds to cache the query.
      *
      * @var DateTime|int|null
      */
-    protected $cacheTtl;
+    protected int|null|DateTime $cacheTtl = null;
 
     /**
      * Get the collection of results
      *
      * @param string|null $scrollId
      *
-     * @return Collection
+     * @return Collection<T>
+     * @throws InvalidArgumentException
      */
-    public function get(?string $scrollId = null): Collection
+    public function get(string|null $scrollId = null): Collection
     {
         $result = $this->getResult($scrollId);
 
@@ -83,42 +88,196 @@ trait ExecutesQueries
     }
 
     /**
-     * Insert multiple documents at once.
+     * Performs multiple indexing or delete operations in a single API call.
+     * This reduces overhead and can greatly increase indexing speed.
      *
-     * @param array|callable $data Dictionary of [id => data] pairs
+     * > If the Elasticsearch security features are enabled, you must have the
+     * > following index privileges for the target data stream, index, or
+     * > index alias:
+     * >  - To use the create action, you must have the `create_doc`, `create`,
+     * >    `index`, or `write` index privilege. Data streams support only the
+     * >    `create` action.
+     * >  - To use the index action, you must have the `create`, `index`, or
+     * >    `write` index privilege.
+     * >  - To use the delete action, you must have the `delete` or `write`
+     * >    `index` privilege.
+     * >  - To use the update action, you must have the `index` or `write`
+     * >    `index` privilege.
+     * >  - To automatically create a data stream or index with a bulk
+     * >    API request, you must have the `auto_configure`, `create_index`, or
+     * >    `manage` index privilege. Automatic data stream creation requires a
+     * >    matching index template with data stream enabled.
+     * >    See Set up a data stream.
      *
-     * @return object
+     * Optimistic concurrency control
+     * ------------------------------
+     * Each index and delete action within a bulk API call may include the
+     * if_seq_no and if_primary_term parameters in their respective action and
+     * meta data lines. The if_seq_no and if_primary_term parameters control how
+     * operations are executed, based on the last modification to
+     * existing documents. See Optimistic concurrency control for more details.
+     *
+     * Versioning
+     * ----------
+     * Each bulk item can include the version value using the version field.
+     * It automatically follows the behavior of the index / delete operation
+     * based on the _version mapping.
+     * It also supports the version_type (see versioning).
+     *
+     * Routing
+     * -------
+     * Each bulk item can include the routing value using the routing field.
+     * It automatically follows the behavior of the index / delete operation
+     * based on the _routing mapping.
+     *
+     * Data streams do not support custom routing unless they were created wit
+     * h the allow_custom_routing setting enabled in the template.
+     *
+     * Wait for active shards
+     * ----------------------
+     * When making bulk calls, you can set the wait_for_active_shards parameter
+     * to require a minimum number of shard copies to be active before starting
+     * to process the bulk request.
+     *
+     * Refresh
+     * -------
+     * Control when the changes made by this request are visible to search.
+     *
+     * Only the shards that receive the bulk request will be affected
+     * by refresh. Imagine a _bulk?refresh=wait_for request with three documents
+     * in it that happen to be routed to different shards in an index with five
+     * shards. The request will only wait for those three shards to refresh.
+     * The other two shards that make up the index do not participate in the
+     * _bulk request at all.
+     *
+     * @param callable|array<string, array<string, mixed>> $data Dictionary of
+     *                                                           [id => data]
+     *                                                           pairs
+     *
+     * @return array{
+     *     took: int,
+     *     errors: bool,
+     *     items: array<int, array{
+     *          create: null|array{
+     *              _index: string,
+     *              _id: string,
+     *              _version: int,
+     *              result: string,
+     *              _shards: array{
+     *                  total: int,
+     *                  failed: int,
+     *                  successful: int
+     *              },
+     *              _seq_no: int,
+     *              _primary_term: int,
+     *              status: int,
+     *              error: null|array{
+     *                  type: string,
+     *                  reason: string,
+     *                  index_uuid: string,
+     *                  shard: string,
+     *                  index: string,
+     *              },
+     *          },
+     *          delete: null|array{
+     *              _index: string,
+     *              _id: string,
+     *              _version: int,
+     *              result: string,
+     *              _shards: array{
+     *                  total: int,
+     *                  failed: int,
+     *                  successful: int
+     *              },
+     *              _seq_no: int,
+     *              _primary_term: int,
+     *              status: int,
+     *              error: null|array{
+     *                  type: string,
+     *                  reason: string,
+     *                  index_uuid: string,
+     *                  shard: string,
+     *                  index: string,
+     *              },
+     *          },
+     *          index: null|array{
+     *              _index: string,
+     *              _id: string,
+     *              _version: int,
+     *              result: string,
+     *              _shards: array{
+     *                  total: int,
+     *                  failed: int,
+     *                  successful: int
+     *              },
+     *              _seq_no: int,
+     *              _primary_term: int,
+     *              status: int,
+     *              error: null|array{
+     *                  type: string,
+     *                  reason: string,
+     *                  index_uuid: string,
+     *                  shard: string,
+     *                  index: string,
+     *              },
+     *          },
+     *          update: null|array{
+     *              _index: string,
+     *              _id: string,
+     *              _version: int,
+     *              result: string,
+     *              _shards: array{
+     *                  total: int,
+     *                  failed: int,
+     *                  successful: int
+     *              },
+     *              _seq_no: int,
+     *              _primary_term: int,
+     *              status: int,
+     *              error: null|array{
+     *                  type: string,
+     *                  reason: string,
+     *                  index_uuid: string,
+     *                  shard: string,
+     *                  index: string,
+     *              },
+     *          },
+     *     }>
+     * }
+     *
+     * @see https://www.elastic.co/guide/en/elasticsearch/reference/current/docs-bulk.html
      */
-    public function bulk($data): object
+    public function bulk(callable|array $data): array
     {
         if (is_callable($data)) {
-            /** @var Query $this */
             $bulk = new Bulk($this);
 
             $data($bulk);
 
-            $params = $bulk->body();
+            $parameters = $bulk->body();
         } else {
-            $params = [];
+            $parameters = [];
 
-            foreach ($data as $key => $value) {
-                $params['body'][] = [
-
+            // Note that bulk operations in Elasticsearch use a special format
+            // that is divided into operation metadata (ID, index etc.) and
+            // attributes to be inserted, the latter following the former.
+            // The below sequential array keys are thus NOT a mistake.
+            foreach ($data as $id => $attributes) {
+                $parameters['body'][] = [
                     'index' => [
                         '_index' => $this->getIndex(),
-                        '_type' => $this->getType(),
-                        '_id' => $key,
+                        '_id' => $id,
                     ],
-
                 ];
 
-                $params['body'][] = $value;
+                $parameters['body'][] = $attributes;
             }
         }
 
-        return (object)$this->getConnection()->getClient()->bulk(
-            $params
-        );
+        return $this
+            ->getConnection()
+            ->getClient()
+            ->bulk($parameters);
     }
 
     /**
@@ -140,18 +299,30 @@ trait ExecutesQueries
      *
      * @param string|null $scrollId
      *
-     * @return Collection
+     * @return array
      */
-    public function clear(?string $scrollId = null): Collection
+    public function clear(string|null $scrollId = null): array
     {
         $scrollId = $scrollId ?? $this->getScrollId();
 
-        return new Collection(
-            $this->getConnection()->getClient()->clearScroll([
-                'scroll_id' => $scrollId,
-                'client' => ['ignore' => $this->getIgnores()],
-            ])
-        );
+        if ( ! $scrollId) {
+            return [];
+        }
+
+        $parameters = [
+            'body' => [$scrollId],
+        ];
+
+        if (count($ignores = $this->getIgnores())) {
+            $parameters['client'] = [
+                'ignore' => $ignores,
+            ];
+        }
+
+        return $this
+            ->getConnection()
+            ->getClient()
+            ->clearScroll($parameters);
     }
 
     /**
@@ -165,16 +336,18 @@ trait ExecutesQueries
 
         // Remove unsupported count query keys
         unset(
-            $query[Query::PARAM_SIZE],
-            $query[Query::PARAM_FROM],
+            $query['size'],
+            $query['from'],
             $query['body']['_source'],
             $query['body']['sort']
         );
 
-        return (int)$this
-                        ->getConnection()
-                        ->getClient()
-                        ->count($query)['count'];
+        $response = $this
+            ->getConnection()
+            ->getClient()
+            ->count($query);
+
+        return (int)$response['count'];
     }
 
     /**
@@ -183,9 +356,21 @@ trait ExecutesQueries
      * @param string $field
      * @param int    $count
      *
-     * @return object
+     * @return array{
+     *   _shards: array{
+     *      total: int,
+     *      failed: int,
+     *      successful: int
+     *   },
+     *   _index: string,
+     *   _id: string,
+     *   _version: int,
+     *   _primary_term: int,
+     *   _seq_no: int,
+     *   result: string
+     * }
      */
-    public function decrement(string $field, int $count = 1): object
+    public function decrement(string $field, int $count = 1): array
     {
         return $this->script("ctx._source.{$field} -= params.count", [
             'count' => $count,
@@ -193,28 +378,118 @@ trait ExecutesQueries
     }
 
     /**
-     * Delete a document
+     * Removes a document from the specified index.
+     *
+     * You use DELETE to remove a document from an index. You must specify the
+     * index name and document ID.
+     *
+     * Optimistic concurrency control
+     * ------------------------------
+     * Delete operations can be made conditional and only be performed if the
+     * last modification to the document was assigned the sequence number and
+     * primary term specified by the if_seq_no and if_primary_term parameters.
+     * If a mismatch is detected, the operation will result in a
+     * VersionConflictException and a status code of 409. See Optimistic
+     * concurrency control for more details.
+     *
+     * Versioning
+     * ----------
+     * Each document indexed is versioned. When deleting a document, the version
+     * can be specified to make sure the relevant document we are trying to
+     * delete is actually being deleted, and it has not changed in the meantime.
+     * Every write operation executed on a document, deletes included, causes
+     * its version to be incremented. The version number of a deleted document
+     * remains available for a short time after deletion to allow for control of
+     * concurrent operations. The length of time for which a deleted document's
+     * version remains available is determined by the index.gc_deletes index
+     * setting and defaults to 60 seconds.
+     *
+     * Automatic index creation
+     * ------------------------
+     * If an external versioning variant is used, the delete operation
+     * automatically creates the specified index if it does not exist. For
+     * information about manually creating indices, see create index API.
+     *
+     * Distributed
+     * -----------
+     * The delete operation gets hashed into a specific shard id. It then gets
+     * redirected into the primary shard within that id group, and replicated
+     * (if needed) to shard replicas within that id group.
+     *
+     * Wait for active shards
+     * ----------------------
+     * When making delete requests, you can set the wait_for_active_shards
+     * parameter to require a minimum number of shard copies to be active before
+     * starting to process the delete request. See here for further details and
+     * a usage example.
+     *
+     * Refresh
+     * -------
+     * Control when the changes made by this request are visible to search.
+     *
+     * Timeout
+     * -------
+     * The primary shard assigned to perform the delete operation might not be
+     * available when the delete operation is executed. Some reasons for this
+     * might be that the primary shard is currently recovering from a store or
+     * undergoing relocation. By default, the delete operation will wait on the
+     * primary shard to become available for up to 1 minute before failing and
+     * responding with an error. The timeout parameter can be used to explicitly
+     * specify how long it waits.
+     *
+     * > If the Elasticsearch security features are enabled, you must have the
+     * > `delete` or `write` index privilege for the target index or index alias
      *
      * @param string|null $id
+     * @param array{
+     *     if_seq_no: int|null,
+     *     if_primary_term: int|null,
+     *     refresh: bool|string|null,
+     *     routing: string|null,
+     *     timeout: string|null,
+     *     version: int|null,
+     *     version_type: string|null,
+     *     wait_for_active_shards: bool|null
+     * }|null             $parameters
      *
-     * @return object
+     * @return array{
+     *   _shards: array{
+     *      total: int,
+     *      failed: int,
+     *      successful: int
+     *   },
+     *   _index: string,
+     *   _id: string,
+     *   _version: int,
+     *   _primary_term: int,
+     *   _seq_no: int,
+     *   result: string
+     * }
      */
-    public function delete(?string $id = null): object
-    {
+    public function delete(
+        string|null $id = null,
+        array|null $parameters = null,
+    ): array {
         if ($id) {
             $this->id($id);
         }
 
-        $parameters = [
-            'id' => $this->getId(),
-            'client' => ['ignore' => $this->getIgnores()],
-        ];
+        $parameters = $parameters ?? [];
+        $parameters['id'] = $this->getId();
+
+        if (count($ignores = $this->getIgnores())) {
+            $parameters['client'] = [
+                ...($parameters['client'] ?? []),
+                'ignore' => $ignores,
+            ];
+        }
 
         $parameters = $this->addBaseParams($parameters);
 
-        return (object)$this->getConnection()->getClient()->delete(
-            $parameters
-        );
+        return $this
+            ->getConnection()
+            ->getClient()
+            ->delete($parameters);
     }
 
     /**
@@ -222,9 +497,10 @@ trait ExecutesQueries
      *
      * @param string|null $scrollId
      *
-     * @return Model|null
+     * @return T|null
+     * @throws InvalidArgumentException
      */
-    public function first(?string $scrollId = null): ?Model
+    public function first(string|null $scrollId = null): Model|null
     {
         $this->take(1);
 
@@ -240,15 +516,16 @@ trait ExecutesQueries
     /**
      * Get the first result or call a callback.
      *
-     * @param null          $scrollId
+     * @param string|null   $scrollId
      * @param callable|null $callback
      *
-     * @return Model|null
+     * @return T|null
+     * @throws InvalidArgumentException
      */
     public function firstOr(
-        $scrollId = null,
-        ?callable $callback = null
-    ): ?Model {
+        string|null $scrollId = null,
+        callable|null $callback = null
+    ): Model|null {
         if (is_callable($scrollId)) {
             $callback = $scrollId;
             $scrollId = null;
@@ -266,10 +543,11 @@ trait ExecutesQueries
      *
      * @param string|null $scrollId
      *
-     * @return Model
+     * @return T
      * @throws DocumentNotFoundException
+     * @throws InvalidArgumentException
      */
-    public function firstOrFail(?string $scrollId = null): Model
+    public function firstOrFail(string|null $scrollId = null): Model
     {
         if ( ! is_null($model = $this->first($scrollId))) {
             return $model;
@@ -279,8 +557,28 @@ trait ExecutesQueries
 
         throw (new DocumentNotFoundException())->setModel(
             get_class($this->getModel()),
-            $id ?? []
+            $id ? (array)$id : []
         );
+    }
+
+    /**
+     * Set the query where clause and retrieve the first matching document.
+     *
+     * @param callable|string $name
+     * @param int|string|null $operator
+     * @param mixed|null      $value
+     *
+     * @return T|null
+     * @throws InvalidArgumentException
+     */
+    public function firstWhere(
+        callable|string $name,
+        int|string|null $operator = Builder::OPERATOR_EQUAL,
+        mixed $value = null
+    ): Model|null {
+        return $this
+            ->where($name, $operator, $value)
+            ->first();
     }
 
     /**
@@ -292,7 +590,7 @@ trait ExecutesQueries
     {
         try {
             return md5($this->toJson());
-        } catch (JsonException $e) {
+        } catch (JsonException) {
             return md5(serialize($this));
         }
     }
@@ -303,9 +601,21 @@ trait ExecutesQueries
      * @param string $field
      * @param int    $count
      *
-     * @return object
+     * @return array{
+     *   _shards: array{
+     *      total: int,
+     *      failed: int,
+     *      successful: int
+     *   },
+     *   _index: string,
+     *   _id: string,
+     *   _version: int,
+     *   _primary_term: int,
+     *   _seq_no: int,
+     *   result: string
+     * }
      */
-    public function increment(string $field, int $count = 1): object
+    public function increment(string $field, int $count = 1): array
     {
         return $this->script("ctx._source.{$field} += params.count", [
             'count' => $count,
@@ -318,9 +628,21 @@ trait ExecutesQueries
      * @param array       $attributes
      * @param string|null $id
      *
-     * @return object
+     * @return array{
+     *     _shards: array{
+     *         total: int,
+     *         failed: int,
+     *         successful: int
+     *     },
+     *     _index: string,
+     *     _id: string,
+     *     _version: int,
+     *     _seq_no: int,
+     *     _primary_term: int,
+     *     result: string
+     * }
      */
-    public function insert(array $attributes, ?string $id = null): object
+    public function insert(array $attributes, string|null $id = null): array
     {
         if ($id) {
             $this->id($id);
@@ -328,12 +650,16 @@ trait ExecutesQueries
 
         $parameters = [
             'body' => array_diff_key($attributes, array_flip([
-                self::FIELD_ID,
-                self::FIELD_TYPE,
-                self::FIELD_INDEX,
+                '_id',
+                '_index',
             ])),
-            'client' => ['ignore' => $this->getIgnores()],
         ];
+
+        if (count($ignores = $this->getIgnores())) {
+            $parameters['client'] = [
+                'ignore' => $ignores,
+            ];
+        }
 
         $parameters = $this->addBaseParams($parameters);
 
@@ -351,17 +677,19 @@ trait ExecutesQueries
      * @param string   $pageName
      * @param int|null $page
      *
-     * @return Pagination
+     * @return Pagination<T>
+     * @throws InvalidArgumentException
      */
     public function paginate(
         int $perPage = 10,
         string $pageName = 'page',
-        ?int $page = null
+        int|null $page = null
     ): Pagination {
-        // Check if the request from PHP CLI
-        if (PHP_SAPI === 'cli') {
-            $this->take($perPage);
+        $this->take($perPage);
 
+        // Check if the request originated from outside a request context, eg.
+        // the PHP command line SAPI
+        if (PHP_SAPI === 'cli') {
             $page = $page ?: 1;
 
             $this->skip(($page * $perPage) - $perPage);
@@ -376,9 +704,7 @@ trait ExecutesQueries
             );
         }
 
-        $this->take($perPage);
-
-        $page = $page ?: Request::get($pageName, 1);
+        $page = $page ?: (int)Request::query($pageName, '1');
 
         $this->skip(($page * $perPage) - $perPage);
 
@@ -397,14 +723,273 @@ trait ExecutesQueries
     }
 
     /**
+     * Indicate that the query results should be cached.
+     *
+     * @param DateTime|int $ttl Cache TTL in seconds.
+     * @param string|null  $key Cache key to use. Will be generated
+     *                          automatically if omitted.
+     *
+     * @return $this
+     */
+    public function remember(DateTime|int $ttl, string|null $key = null): self
+    {
+        $this->cacheTtl = $ttl;
+        $this->cacheKey = $key;
+
+        return $this;
+    }
+
+    /**
+     * Indicate that the query results should be cached forever.
+     *
+     * @param string|null $key
+     *
+     * @return $this
+     */
+    public function rememberForever(string|null $key = null): self
+    {
+        return $this->remember(-1, $key);
+    }
+
+    /**
+     * Update by script
+     *
+     * @param mixed $script
+     * @param array $params
+     *
+     * @return array{
+     *   _shards: array{
+     *      total: int,
+     *      failed: int,
+     *      successful: int
+     *   },
+     *   _index: string,
+     *   _id: string,
+     *   _version: int,
+     *   _primary_term: int,
+     *   _seq_no: int,
+     *   result: string
+     * }
+     */
+    public function script(mixed $script, array $params = []): array
+    {
+        $parameters = [
+            'id' => $this->getId(),
+            'body' => [
+                'script' => [
+                    'inline' => $script,
+                    'params' => $params,
+                ],
+            ],
+        ];
+
+        if (count($ignores = $this->getIgnores())) {
+            $parameters['client'] = [
+                'ignore' => $ignores,
+            ];
+        }
+
+        $parameters = $this->addBaseParams($parameters);
+
+        return $this->getConnection()->getClient()->update(
+            $parameters
+        );
+    }
+
+    /**
+     * Update a document
+     *
+     * @param array           $attributes
+     * @param int|string|null $id
+     *
+     * @return array{
+     *   _shards: array{
+     *      total: int,
+     *      failed: int,
+     *      successful: int
+     *   },
+     *   _index: string,
+     *   _id: string,
+     *   _version: int,
+     *   _primary_term: int,
+     *   _seq_no: int,
+     *   result: string
+     * }
+     */
+    public function update(array $attributes, int|string $id = null): array
+    {
+        if ($id) {
+            $this->id($id);
+        }
+
+        unset(
+            $attributes['_highlight'],
+            $attributes['_index'],
+            $attributes['_score'],
+            $attributes['_id'],
+        );
+
+        $parameters = [
+            'id' => $this->getId(),
+            'body' => [
+                'doc' => $attributes,
+            ],
+        ];
+
+        if (count($ignores = $this->getIgnores())) {
+            $parameters['client'] = [
+                'ignore' => $ignores,
+            ];
+        }
+
+        $parameters = $this->addBaseParams($parameters);
+
+        return $this
+            ->getConnection()
+            ->getClient()
+            ->update($parameters);
+    }
+
+    /**
+     * Processes a result and turns it into a model instance.
+     *
+     * @param array{
+     *            _index: string,
+     *            _id: string,
+     *            _score: string,
+     *            _source: T,
+     *            fields: array<string, array>|null
+     *        } $document Raw document to create a model instance from
+     *
+     * @return T Model instance representing the source document
+     */
+    protected function createModelInstance(array $document): Model
+    {
+        $data = $document['_source'] ?? [];
+        $metadata = array_diff_key($document, array_flip([
+            '_source',
+        ]));
+
+        return $this->getModel()->newInstance(
+            $data,
+            $metadata,
+            true,
+            $document['_index'] ?? null,
+        );
+    }
+
+    /**
+     * @return CacheInterface|null
+     */
+    protected function getCache(): CacheInterface|null
+    {
+        return $this->getConnection()->getCache();
+    }
+
+    /**
+     * Executes the query and handles the result
+     *
+     * @param string|null $scrollId
+     *
+     * @return null|array{
+     *     _scroll_id: string|null,
+     *     took: int,
+     *     timed_out: bool,
+     *     _shards: array{
+     *         total: int,
+     *         successful: int,
+     *         skipped: int,
+     *         failed: int
+     *     },
+     *     hits: array{
+     *         total: array{
+     *             value: int,
+     *             relation: string
+     *         }|int,
+     *         max_score: float,
+     *         hits: array<int, array{
+     *              _index: string,
+     *              _id: string,
+     *              _score: string,
+     *              _source: T,
+     *              fields: array<string, array>|null
+     *         }>
+     *     },
+     *     suggest: null|array,
+     *     aggregations: null|array<string, array{
+     *         doc_count_error_upper_bound: int,
+     *         sum_other_doc_count: int,
+     *         buckets: array<int, array{
+     *             key: string,
+     *             doc_count: int
+     *         }>,
+     *         meta: array<string, mixed>|null
+     *     }>,
+     * }
+     * @throws InvalidArgumentException
+     */
+    protected function getResult(string|null $scrollId = null): array|null
+    {
+        if ( ! $this->cacheTtl) {
+            return $this->performSearch($scrollId);
+        }
+
+        if ($cache = $this->getCache()) {
+            try {
+                return $cache->get($this->getCacheKey());
+            } catch (Throwable|InvalidArgumentException) {
+                // If the cache didn't like our cache key (which should be
+                // impossible), we regard it as a cache failure and perform a
+                // normal search instead.
+            }
+        }
+
+        return $this->performSearch($scrollId);
+    }
+
+    /**
      * Get non-cached results
      *
      * @param string|null $scrollId
      *
-     * @return array
+     * @return null|array{
+     *     _scroll_id: string|null,
+     *     took: int,
+     *     timed_out: bool,
+     *     _shards: array{
+     *         total: int,
+     *         successful: int,
+     *         skipped: int,
+     *         failed: int
+     *     },
+     *     hits: array{
+     *         total: array{
+     *             value: int,
+     *             relation: string
+     *         }|int,
+     *         max_score: float,
+     *         hits: array<int, array{
+     *              _index: string,
+     *              _id: string,
+     *              _score: string,
+     *              _source: T,
+     *              fields: array<string, array>|null
+     *         }>
+     *     },
+     *     suggest: null|array,
+     *     aggregations: null|array<string, array{
+     *         doc_count_error_upper_bound: int,
+     *         sum_other_doc_count: int,
+     *         buckets: array<int, array{
+     *             key: string,
+     *             doc_count: int
+     *         }>,
+     *         meta: array<string, mixed>|null
+     *     }>,
+     * }
      * @throws InvalidArgumentException
      */
-    public function performSearch(?string $scrollId = null): ?array
+    protected function performSearch(string|null $scrollId = null): array|null
     {
         $scrollId = $scrollId ?? $this->getScrollId();
 
@@ -413,8 +998,8 @@ trait ExecutesQueries
                 ->getConnection()
                 ->getClient()
                 ->scroll([
-                    Query::PARAM_SCROLL => $this->getScroll(),
-                    Query::PARAM_SCROLL_ID => $scrollId,
+                    'scroll' => $this->getScroll(),
+                    'scroll_id' => $scrollId,
                 ]);
         } else {
             $query = $this->buildQuery();
@@ -440,187 +1025,65 @@ trait ExecutesQueries
     }
 
     /**
-     * Keeping around for backwards compatibility
-     *
-     * @return array
-     * @deprecated Use toArray() instead
-     * @see        Query::toArray()
-     */
-    #[Deprecated(replacement: '%class%->toArray()')]
-    public function query(): array
-    {
-        return $this->toArray();
-    }
-
-    /**
-     * Indicate that the query results should be cached.
-     *
-     * @param DateTime|int $ttl Cache TTL in seconds.
-     * @param string|null  $key Cache key to use. Will be generated
-     *                          automatically if omitted.
-     *
-     * @return $this
-     */
-    public function remember($ttl, ?string $key = null): self
-    {
-        $this->cacheTtl = $ttl;
-        $this->cacheKey = $key;
-
-        return $this;
-    }
-
-    /**
-     * Indicate that the query results should be cached forever.
-     *
-     * @param string|null $key
-     *
-     * @return $this
-     */
-    public function rememberForever(?string $key = null): self
-    {
-        return $this->remember(-1, $key);
-    }
-
-    /**
-     * Update by script
-     *
-     * @param mixed $script
-     * @param array $params
-     *
-     * @return object
-     */
-    public function script($script, array $params = []): object
-    {
-        $parameters = [
-            'id' => $this->getId(),
-            'body' => [
-                'script' => [
-                    'inline' => $script,
-                    'params' => $params,
-                ],
-            ],
-            'client' => ['ignore' => $this->getIgnores()],
-        ];
-
-        $parameters = $this->addBaseParams($parameters);
-
-        return (object)$this->getConnection()->getClient()->update(
-            $parameters
-        );
-    }
-
-    /**
-     * Update a document
-     *
-     * @param array           $attributes
-     * @param string|int|null $id
-     *
-     * @return object
-     */
-    public function update(array $attributes, $id = null): object
-    {
-        if ($id) {
-            $this->id($id);
-        }
-
-        unset(
-            $attributes[self::FIELD_HIGHLIGHT],
-            $attributes[self::FIELD_INDEX],
-            $attributes[self::FIELD_SCORE],
-            $attributes[self::FIELD_TYPE],
-            $attributes[self::FIELD_ID],
-        );
-
-        $parameters = [
-            'id' => $this->getId(),
-            'body' => [
-                'doc' => $attributes,
-            ],
-            'client' => [
-                'ignore' => $this->getIgnores(),
-            ],
-        ];
-
-        $parameters = $this->addBaseParams($parameters);
-
-        return (object)$this->getConnection()->getClient()->update(
-            $parameters
-        );
-    }
-
-    /**
-     * Processes a result and turns it into a model instance.
-     *
-     * @param array<string, mixed> $document Raw document to create a model
-     *                                       instance from
-     *
-     * @return Model Model instance representing the source document
-     */
-    protected function createModelInstance(array $document): Model
-    {
-        $data = $document[Query::FIELD_SOURCE] ?? [];
-        $metadata = array_diff_key($document, array_flip([
-            Query::FIELD_SOURCE,
-        ]));
-
-        return $this->getModel()->newInstance(
-            $data,
-            $metadata,
-            true,
-            $document[Query::FIELD_INDEX] ?? null,
-            $document[Query::FIELD_TYPE] ?? null,
-        );
-    }
-
-    /**
-     * @return CacheInterface|null
-     */
-    protected function getCache(): ?CacheInterface
-    {
-        return $this->getConnection()->getCache();
-    }
-
-    /**
-     * Executes the query and handles the result
-     *
-     * @param string|null $scrollId
-     *
-     * @return array|null
-     * @throws InvalidArgumentException
-     */
-    protected function getResult(?string $scrollId = null): ?array
-    {
-        if ( ! $this->cacheTtl) {
-            return $this->performSearch($scrollId);
-        }
-
-        if ($cache = $this->getCache()) {
-            try {
-                return $cache->get($this->getCacheKey());
-            } catch (Throwable|InvalidArgumentException $exception) {
-                // If the cache didn't like our cache key (which should be
-                // impossible), we regard it as a cache failure and perform a
-                // normal search instead.
-            }
-        }
-
-        return $this->performSearch($scrollId);
-    }
-
-    /**
      * Retrieves all documents from a response.
      *
-     * @param array[] $response Response to extract documents from
+     * @param array{
+     *     _scroll_id: string|null,
+     *     took: int,
+     *     timed_out: bool,
+     *     _shards: array{
+     *         total: int,
+     *         successful: int,
+     *         skipped: int,
+     *         failed: int
+     *     },
+     *     hits: array{
+     *         total: array{
+     *             value: int,
+     *             relation: string
+     *         }|int,
+     *         max_score: float,
+     *         hits: array<int, array{
+     *              _index: string,
+     *              _id: string,
+     *              _score: string,
+     *              _source: T,
+     *              fields: array<string, array>|null
+     *         }>
+     *     },
+     *     suggest: null|array,
+     *     aggregations: null|array<string, array{
+     *         doc_count_error_upper_bound: int,
+     *         sum_other_doc_count: int,
+     *         buckets: array<int, array{
+     *             key: string,
+     *             doc_count: int
+     *         }>,
+     *         meta: array<string, mixed>|null
+     *     }>,
+     * } $response Response to extract documents from
      *
-     * @return Collection Collection of model instances representing the
-     *                    documents contained in the response
+     * @return Collection<int, T> Collection of model instances representing the
+     *                            documents contained in the response
      */
     protected function transformIntoCollection(array $response = []): Collection
     {
-        $results = $response[Query::FIELD_HITS][Query::FIELD_NESTED_HITS] ?? [];
-        $documents = array_map(function (array $document): Model {
-            return $this->createModelInstance($document);
-        }, $results);
+        /**
+         * @var array<int, array{
+         *     _index: string,
+         *     _id: string,
+         *     _score: string,
+         *     _source: T,
+         *     fields: array<string, array>|null
+         * }> $results
+         */
+        $results = Arr::get($response, 'hits.hits', []);
+        $documents = array_map(
+            fn(array $document): Model => $this->createModelInstance(
+                $document
+            ),
+            $results
+        );
 
         return Collection::fromResponse(
             $response,
@@ -634,20 +1097,18 @@ trait ExecutesQueries
      *
      * @param array[] $response Response to extract the first document from
      *
-     * @return Model|null Model instance if any documents were found in the
-     *                    response, `null` otherwise
+     * @return T|null Model instance if any documents were found in the
+     *                response, `null` otherwise
      */
-    protected function transformIntoModel(array $response = []): ?Model
+    protected function transformIntoModel(array $response = []): Model|null
     {
-        if ( ! isset(
-            $response[Query::FIELD_HITS][Query::FIELD_NESTED_HITS][0]
-        )) {
+        $source = Arr::get($response, 'hits.hits.0');
+
+        if ( ! $source) {
             return null;
         }
 
-        return $this->createModelInstance(
-            $response[Query::FIELD_HITS][Query::FIELD_NESTED_HITS][0]
-        );
+        return $this->createModelInstance($source);
     }
 
     /**
@@ -660,11 +1121,7 @@ trait ExecutesQueries
     private function addBaseParams(array $params): array
     {
         if ($index = $this->getIndex()) {
-            $params[Query::PARAM_INDEX] = $index;
-        }
-
-        if ($type = $this->getType()) {
-            $params[Query::PARAM_TYPE] = $type;
+            $params['index'] = $index;
         }
 
         return $params;

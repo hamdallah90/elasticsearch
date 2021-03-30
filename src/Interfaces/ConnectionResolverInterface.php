@@ -4,17 +4,14 @@ declare(strict_types=1);
 
 namespace Matchory\Elasticsearch\Interfaces;
 
+/**
+ * Connection Resolver Interface
+ *
+ * @template T of \Matchory\Elasticsearch\Model
+ * @bundle   Matchory\Elasticsearch
+ */
 interface ConnectionResolverInterface
 {
-    /**
-     * Get a database connection instance.
-     *
-     * @param string|null $name
-     *
-     * @return ConnectionInterface
-     */
-    public function connection(?string $name = null): ConnectionInterface;
-
     /**
      * Get the default connection name.
      *
@@ -30,4 +27,13 @@ interface ConnectionResolverInterface
      * @return void
      */
     public function setDefaultConnection(string $name): void;
+
+    /**
+     * Get a database connection instance.
+     *
+     * @param string|null $name
+     *
+     * @return ConnectionInterface<T>
+     */
+    public function connection(string|null $name = null): ConnectionInterface;
 }
