@@ -314,6 +314,8 @@ class Query implements Arrayable, JsonSerializable, Jsonable, IteratorAggregate
      */
     protected function buildQuery(): array
     {
+        $query = $this->applyScopes();
+
         $params = [
             self::PARAM_BODY => $this->getBody(),
             self::PARAM_FROM => $this->getSkip(),
