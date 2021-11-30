@@ -75,8 +75,6 @@ class WhereNotTest extends TestCase
     }
 
     /**
-     * Get The expected results.
-     *
      * @param        $name
      * @param string $operator
      * @param null   $value
@@ -152,8 +150,6 @@ class WhereNotTest extends TestCase
     }
 
     /**
-     * Get The actual results.
-     *
      * @param        $name
      * @param string $operator
      * @param null   $value

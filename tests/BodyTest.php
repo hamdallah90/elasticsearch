@@ -45,8 +45,6 @@ class BodyTest extends TestCase
     }
 
     /**
-     * Get the expected results.
-     *
      * @param $body array
      *
      * @return array
@@ -57,8 +55,6 @@ class BodyTest extends TestCase
     }
 
     /**
-     * Get the actual results.
-     *
      * @param $body array
      *
      * @return array

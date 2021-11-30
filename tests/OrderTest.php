@@ -32,8 +32,6 @@ class OrderTest extends TestCase
     }
 
     /**
-     * Get The expected results.
-     *
      * @param string $field
      * @param string $direction
      *
@@ -51,8 +49,6 @@ class OrderTest extends TestCase
     }
 
     /**
-     * Get The actual results.
-     *
      * @param string $field
      * @param string $direction
      *

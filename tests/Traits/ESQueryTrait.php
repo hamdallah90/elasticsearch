@@ -6,15 +6,6 @@ namespace Matchory\Elasticsearch\Tests\Traits;
 use Elasticsearch\Client;
 use Matchory\Elasticsearch\Connection;
 use Matchory\Elasticsearch\Query;
-use PHPUnit\Framework\InvalidArgumentException;
-use PHPUnit\Framework\MockObject\ClassAlreadyExistsException;
-use PHPUnit\Framework\MockObject\ClassIsFinalException;
-use PHPUnit\Framework\MockObject\DuplicateMethodException;
-use PHPUnit\Framework\MockObject\InvalidMethodNameException;
-use PHPUnit\Framework\MockObject\OriginalConstructorInvocationRequiredException;
-use PHPUnit\Framework\MockObject\ReflectionException;
-use PHPUnit\Framework\MockObject\RuntimeException;
-use PHPUnit\Framework\MockObject\UnknownTypeException;
 
 /**
  * Class ESQueryTrait
@@ -26,14 +17,14 @@ trait ESQueryTrait
      *
      * @var string
      */
-    protected $index = "my_index";
+    protected $index = 'my_index';
 
     /**
-     * Test type name
+     * Test query offset
      *
-     * @var string
+     * @var int
      */
-    protected $type = "my_type";
+    protected $skip = 0;
 
     /**
      * Test query limit
@@ -42,12 +33,18 @@ trait ESQueryTrait
      */
     protected $take = 10;
 
-    /**
-     * Test query offset
-     *
-     * @var int
-     */
-    protected $skip = 0;
+    protected function getClient(): Client
+    {
+        return $this
+            ->getMockBuilder(Client::class)
+            ->disableOriginalConstructor()
+            ->getMock();
+    }
+
+    protected function getConnection(): Connection
+    {
+        return new Connection($this->getClient());
+    }
 
     /**
      * Expected query array
@@ -60,7 +57,6 @@ trait ESQueryTrait
     {
         return [
             'index' => $this->index,
-            'type' => $this->type,
             'body' => $body,
             'from' => $this->skip,
             'size' => $this->take,
@@ -70,28 +66,14 @@ trait ESQueryTrait
     /**
      * ES query object
      *
+     * @param Query|null $query
+     *
      * @return Query
-     * @throws InvalidArgumentException
-     * @throws ClassAlreadyExistsException
-     * @throws ClassIsFinalException
-     * @throws DuplicateMethodException
-     * @throws InvalidMethodNameException
-     * @throws OriginalConstructorInvocationRequiredException
-     * @throws ReflectionException
-     * @throws RuntimeException
-     * @throws UnknownTypeException
      */
-    protected function getQueryObject(): Query
+    protected function getQueryObject(?Query $query = null): Query
     {
-        return (new Query(
-            new Connection(
-                $this->getMockBuilder(Client::class)
-                     ->disableOriginalConstructor()
-                     ->getMock()
-            )
-        ))
+        return ($query ?? new Query($this->getConnection()))
             ->index($this->index)
-            ->type($this->type)
             ->take($this->take)
             ->skip($this->skip);
     }

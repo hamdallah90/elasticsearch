@@ -1,57 +1,83 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Matchory\Elasticsearch\Tests;
 
 use Matchory\Elasticsearch\Tests\Traits\ESQueryTrait;
 use PHPUnit\Framework\ExpectationFailedException;
+use PHPUnit\Framework\MockObject\ClassAlreadyExistsException;
+use PHPUnit\Framework\MockObject\ClassIsFinalException;
+use PHPUnit\Framework\MockObject\DuplicateMethodException;
+use PHPUnit\Framework\MockObject\InvalidMethodNameException;
+use PHPUnit\Framework\MockObject\OriginalConstructorInvocationRequiredException;
+use PHPUnit\Framework\MockObject\ReflectionException;
+use PHPUnit\Framework\MockObject\RuntimeException;
+use PHPUnit\Framework\MockObject\UnknownTypeException;
 use PHPUnit\Framework\TestCase;
 use SebastianBergmann\RecursionContext\InvalidArgumentException;
 
 class SelectTest extends TestCase
 {
-
     use ESQueryTrait;
 
     /**
-     * Test the select() method.
-     *
      * @return void
+     * @throws ClassAlreadyExistsException
+     * @throws ClassIsFinalException
+     * @throws DuplicateMethodException
      * @throws ExpectationFailedException
      * @throws InvalidArgumentException
+     * @throws InvalidMethodNameException
+     * @throws OriginalConstructorInvocationRequiredException
+     * @throws ReflectionException
+     * @throws RuntimeException
+     * @throws UnknownTypeException
+     * @throws \PHPUnit\Framework\InvalidArgumentException
+     * @test
      */
-    public function testIgnoreMethod(): void
+    public function select(): void
     {
         self::assertEquals(
-            $this->getExpected("title", "content"),
-            $this->getActual("title", "content")
+            $this->getExpected('foo', 'bar'),
+            $this->getActual('foo', 'bar')
         );
     }
 
     /**
-     * Get The expected results.
+     * @param string ...$fields
      *
      * @return array
+     * @throws ClassAlreadyExistsException
+     * @throws ClassIsFinalException
+     * @throws DuplicateMethodException
+     * @throws InvalidMethodNameException
+     * @throws OriginalConstructorInvocationRequiredException
+     * @throws ReflectionException
+     * @throws RuntimeException
+     * @throws UnknownTypeException
+     * @throws \PHPUnit\Framework\InvalidArgumentException
      */
-    protected function getExpected(): array
-    {
-        $query = $this->getQueryArray();
-
-        $query["body"]["_source"]['include'] = func_get_args();
-        $query["body"]["_source"]['exclude'] = [];
-
-        return $query;
-    }
-
-    /**
-     * Get The actual results.
-     *
-     * @return array
-     */
-    protected function getActual(): array
+    protected function getActual(string ...$fields): array
     {
         return $this
             ->getQueryObject()
-            ->select(func_get_args())
-            ->query();
+            ->select($fields)
+            ->toArray();
+    }
+
+    /**
+     * @param string ...$fields
+     *
+     * @return array
+     */
+    protected function getExpected(string ...$fields): array
+    {
+        $query = $this->getQueryArray();
+
+        $query['body']['_source']['includes'] = $fields;
+        $query['body']['_source']['excludes'] = [];
+
+        return $query;
     }
 }

@@ -1,10 +1,19 @@
 <?php
-/** @noinspection PhpUnhandledExceptionInspection */
+
+declare(strict_types=1);
 
 namespace Matchory\Elasticsearch\Tests;
 
 use Matchory\Elasticsearch\Tests\Traits\ESQueryTrait;
 use PHPUnit\Framework\ExpectationFailedException;
+use PHPUnit\Framework\MockObject\ClassAlreadyExistsException;
+use PHPUnit\Framework\MockObject\ClassIsFinalException;
+use PHPUnit\Framework\MockObject\DuplicateMethodException;
+use PHPUnit\Framework\MockObject\InvalidMethodNameException;
+use PHPUnit\Framework\MockObject\OriginalConstructorInvocationRequiredException;
+use PHPUnit\Framework\MockObject\ReflectionException;
+use PHPUnit\Framework\MockObject\RuntimeException;
+use PHPUnit\Framework\MockObject\UnknownTypeException;
 use PHPUnit\Framework\TestCase;
 use SebastianBergmann\RecursionContext\InvalidArgumentException;
 
@@ -18,69 +27,105 @@ class WhereTest extends TestCase
      * @var array
      */
     protected $operators = [
-        "=",
-        "!=",
-        ">",
-        ">=",
-        "<",
-        "<=",
-        "like",
-        "exists",
+        '=',
+        '!=',
+        '>',
+        '>=',
+        '<',
+        '<=',
+        'like',
+        'exists',
     ];
 
     /**
      * Test the where() method.
      *
      * @return void
+     * @throws ClassAlreadyExistsException
+     * @throws ClassIsFinalException
+     * @throws DuplicateMethodException
      * @throws ExpectationFailedException
      * @throws InvalidArgumentException
+     * @throws InvalidMethodNameException
+     * @throws OriginalConstructorInvocationRequiredException
+     * @throws ReflectionException
+     * @throws RuntimeException
+     * @throws UnknownTypeException
+     * @throws \InvalidArgumentException
+     * @throws \PHPUnit\Framework\InvalidArgumentException
      */
     public function testWhereMethod(): void
     {
         self::assertEquals(
-            $this->getExpected("status", "published"),
-            $this->getActual("status", "published")
+            $this->getExpected('status', 'published'),
+            $this->getActual('status', 'published')
         );
 
         self::assertEquals(
-            $this->getExpected("status", "=", "published"),
-            $this->getActual("status", "=", "published")
+            $this->getExpected('status', '=', 'published'),
+            $this->getActual('status', '=', 'published')
         );
 
         self::assertEquals(
-            $this->getExpected("views", ">", 1000),
-            $this->getActual("views", ">", 1000)
+            $this->getExpected('views', '>', 1000),
+            $this->getActual('views', '>', 1000)
         );
 
         self::assertEquals(
-            $this->getExpected("views", ">=", 1000),
-            $this->getActual("views", ">=", 1000)
+            $this->getExpected('views', '>=', 1000),
+            $this->getActual('views', '>=', 1000)
         );
 
         self::assertEquals(
-            $this->getExpected("views", "<=", 1000),
-            $this->getActual("views", "<=", 1000)
+            $this->getExpected('views', '<=', 1000),
+            $this->getActual('views', '<=', 1000)
         );
 
         self::assertEquals(
-            $this->getExpected("content", "like", "hello"),
-            $this->getActual("content", "like", "hello")
+            $this->getExpected('content', 'like', 'hello'),
+            $this->getActual('content', 'like', 'hello')
         );
 
         self::assertEquals(
-            $this->getExpected("website", "exists", true),
-            $this->getActual("website", "exists", true)
+            $this->getExpected('website', 'exists', true),
+            $this->getActual('website', 'exists', true)
         );
 
         self::assertEquals(
-            $this->getExpected("website", "exists", false),
-            $this->getActual("website", "exists", false)
+            $this->getExpected('website', 'exists', false),
+            $this->getActual('website', 'exists', false)
         );
     }
 
     /**
-     * Get The expected results.
+     * @param string     $name
+     * @param string     $operator
+     * @param mixed|null $value
      *
+     * @return array
+     * @throws \InvalidArgumentException
+     * @throws \PHPUnit\Framework\InvalidArgumentException
+     * @throws ClassAlreadyExistsException
+     * @throws ClassIsFinalException
+     * @throws DuplicateMethodException
+     * @throws InvalidMethodNameException
+     * @throws OriginalConstructorInvocationRequiredException
+     * @throws ReflectionException
+     * @throws RuntimeException
+     * @throws UnknownTypeException
+     */
+    protected function getActual(
+        string $name,
+        string $operator = '=',
+        $value = null
+    ): array {
+        return $this
+            ->getQueryObject()
+            ->where($name, $operator, $value)
+            ->toArray();
+    }
+
+    /**
      * @param string     $name
      * @param string     $operator
      * @param mixed|null $value
@@ -89,7 +134,7 @@ class WhereTest extends TestCase
      */
     protected function getExpected(
         string $name,
-        string $operator = "=",
+        string $operator = '=',
         $value = null
     ): array {
         $query = $this->getQueryArray();
@@ -100,42 +145,42 @@ class WhereTest extends TestCase
             true
         )) {
             $value = $operator;
-            $operator = "=";
+            $operator = '=';
         }
 
         $filter = [];
         $must = [];
         $must_not = [];
 
-        if ($operator === "=") {
-            $filter[] = ["term" => [$name => $value]];
+        if ($operator === '=') {
+            $filter[] = ['term' => [$name => $value]];
         }
 
-        if ($operator === ">") {
-            $filter[] = ["range" => [$name => ["gt" => $value]]];
+        if ($operator === '>') {
+            $filter[] = ['range' => [$name => ['gt' => $value]]];
         }
 
-        if ($operator === ">=") {
-            $filter[] = ["range" => [$name => ["gte" => $value]]];
+        if ($operator === '>=') {
+            $filter[] = ['range' => [$name => ['gte' => $value]]];
         }
 
-        if ($operator === "<") {
-            $filter[] = ["range" => [$name => ["lt" => $value]]];
+        if ($operator === '<') {
+            $filter[] = ['range' => [$name => ['lt' => $value]]];
         }
 
-        if ($operator === "<=") {
-            $filter[] = ["range" => [$name => ["lte" => $value]]];
+        if ($operator === '<=') {
+            $filter[] = ['range' => [$name => ['lte' => $value]]];
         }
 
-        if ($operator === "like") {
-            $must[] = ["match" => [$name => $value]];
+        if ($operator === 'like') {
+            $must[] = ['match' => [$name => $value]];
         }
 
-        if ($operator === "exists") {
+        if ($operator === 'exists') {
             if ($value) {
-                $must[] = ["exists" => ["field" => $name]];
+                $must[] = ['exists' => ['field' => $name]];
             } else {
-                $must_not[] = ["exists" => ["field" => $name]];
+                $must_not[] = ['exists' => ['field' => $name]];
             }
         }
 
@@ -144,39 +189,19 @@ class WhereTest extends TestCase
         $bool = [];
 
         if (count($must)) {
-            $bool["must"] = $must;
+            $bool['must'] = $must;
         }
 
         if (count($must_not)) {
-            $bool["must_not"] = $must_not;
+            $bool['must_not'] = $must_not;
         }
 
         if (count($filter)) {
-            $bool["filter"] = $filter;
+            $bool['filter'] = $filter;
         }
 
-        $query["body"]["query"]["bool"] = $bool;
+        $query['body']['query']['bool'] = $bool;
 
         return $query;
-    }
-
-    /**
-     * Get The actual results.
-     *
-     * @param string     $name
-     * @param string     $operator
-     * @param mixed|null $value
-     *
-     * @return array
-     */
-    protected function getActual(
-        string $name,
-        string $operator = "=",
-        $value = null
-    ): array {
-        return $this
-            ->getQueryObject()
-            ->where($name, $operator, $value)
-            ->query();
     }
 }

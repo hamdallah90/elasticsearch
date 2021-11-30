@@ -28,8 +28,6 @@ class WhereNotInTest extends TestCase
     }
 
     /**
-     * Get The expected results.
-     *
      * @param string $name
      * @param array  $value
      *
@@ -47,8 +45,6 @@ class WhereNotInTest extends TestCase
     }
 
     /**
-     * Get The actual results.
-     *
      * @param       $name
      * @param array $value
      *

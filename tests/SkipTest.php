@@ -28,8 +28,6 @@ class SkipTest extends TestCase
     }
 
     /**
-     * Get The expected results.
-     *
      * @param string $from
      *
      * @return array
@@ -44,8 +42,6 @@ class SkipTest extends TestCase
     }
 
     /**
-     * Get The actual results.
-     *
      * @param string $from
      *
      * @return array
