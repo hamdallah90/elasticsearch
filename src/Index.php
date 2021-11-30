@@ -6,6 +6,7 @@ namespace Matchory\Elasticsearch;
 
 use ArrayObject;
 use Elasticsearch\Client;
+use JetBrains\PhpStorm\Deprecated;
 use Matchory\Elasticsearch\Interfaces\ConnectionInterface;
 use TypeError;
 
@@ -40,6 +41,15 @@ class Index
     private const PARAM_SETTINGS_NUMBER_OF_SHARDS = 'number_of_shards';
 
     /**
+     * Index create callback
+     *
+     * @var callable|null
+     * @deprecated Will be made private in the next major release.
+     */
+    #[Deprecated()]
+    public $callback;
+
+    /**
      * Native elasticsearch client instance
      *
      * @var ConnectionInterface
@@ -47,6 +57,7 @@ class Index
      *             method accessor instead.
      * @see        Index::getConnection()
      */
+    #[Deprecated(replacement: '%class%::getConnection()')]
     public $connection;
 
     /**
@@ -57,7 +68,19 @@ class Index
      *             method accessor instead.
      * @see        Index::ignore()
      */
+    #[Deprecated(replacement: '%class%::ignore()')]
     public $ignores = [];
+
+    /**
+     * Mappings the index shall be configured with.
+     *
+     * @var array
+     * @deprecated Will be made private in the next major release. Use the
+     *             method accessor instead.
+     * @see        Index::mapping()
+     */
+    #[Deprecated(replacement: '%class%::mapping()')]
+    public $mappings = [];
 
     /**
      * Index name
@@ -70,12 +93,15 @@ class Index
     public $name;
 
     /**
-     * Index create callback
+     * The number of replicas the index shall be configured with.
      *
-     * @var callable|null
-     * @deprecated Will be made private in the next major release.
+     * @var int
+     * @deprecated Will be made private in the next major release. Use the
+     *             method accessor instead.
+     * @see        Index::replicas()
      */
-    public $callback;
+    #[Deprecated(replacement: '%class%::replicas()')]
+    public $replicas = 0;
 
     /**
      * The number of shards the index shall be configured with.
@@ -85,27 +111,8 @@ class Index
      *             method accessor instead.
      * @see        Index::shards()
      */
+    #[Deprecated(replacement: '%class%::shards()')]
     public $shards = 5;
-
-    /**
-     * The number of replicas the index shall be configured with.
-     *
-     * @var int
-     * @deprecated Will be made private in the next major release. Use the
-     *             method accessor instead.
-     * @see        Index::replicas()
-     */
-    public $replicas = 0;
-
-    /**
-     * Mappings the index shall be configured with.
-     *
-     * @var array
-     * @deprecated Will be made private in the next major release. Use the
-     *             method accessor instead.
-     * @see        Index::mapping()
-     */
-    public $mappings = [];
 
     /**
      * Aliases the index shall be configured with.
@@ -129,6 +136,40 @@ class Index
     }
 
     /**
+     * Retrieves the Elasticsearch  client instance.
+     *
+     * @return Client
+     * @internal
+     */
+    public function getClient(): Client
+    {
+        return $this->getConnection()->getClient();
+    }
+
+    /**
+     * Retrieves the active connection.
+     *
+     * @return ConnectionInterface
+     * @internal
+     */
+    public function getConnection(): ConnectionInterface
+    {
+        return $this->connection;
+    }
+
+    /**
+     * Sets the active connection on the index.
+     *
+     * @param ConnectionInterface $connection
+     *
+     * @internal
+     */
+    public function setConnection(ConnectionInterface $connection): void
+    {
+        $this->connection = $connection;
+    }
+
+    /**
      * Retrieves the name of the new index.
      *
      * @return string
@@ -136,45 +177,6 @@ class Index
     public function getName(): string
     {
         return $this->name;
-    }
-
-    /**
-     * The number of primary shards that an index should have. Defaults to `1`.
-     * This setting can only be set at index creation time. It cannot be changed
-     * on a closed index.
-     *
-     * The number of shards are limited to 1024 per index. This limitation is a
-     * safety limit to prevent accidental creation of indices that can
-     * destabilize a cluster due to resource allocation. The limit can be
-     * modified by specifying
-     * `export ES_JAVA_OPTS="-Des.index.max_number_of_shards=128"` system
-     * property on every node that is part of the cluster.
-     *
-     * @param int $shards Number of shards to configure.
-     *
-     * @return $this
-     * @see https://www.elastic.co/guide/en/elasticsearch/reference/master/index-modules.html#index-number-of-shards
-     */
-    public function shards(int $shards): self
-    {
-        $this->shards = $shards;
-
-        return $this;
-    }
-
-    /**
-     * The number of replicas each primary shard has. Defaults to `1`.
-     *
-     * @param int $replicas Number of replicas to configure.
-     *
-     * @return $this
-     * @see https://www.elastic.co/guide/en/elasticsearch/reference/master/index-modules.html#index-number-of-replicas
-     */
-    public function replicas(int $replicas): self
-    {
-        $this->replicas = $replicas;
-
-        return $this;
     }
 
     /**
@@ -216,36 +218,6 @@ class Index
         $this->aliases[$alias] = $options ?? new ArrayObject();
 
         return $this;
-    }
-
-    /**
-     * Configures the client to ignore bad HTTP requests.
-     *
-     * @param int ...$statusCodes HTTP Status codes to ignore.
-     *
-     * @return $this
-     */
-    public function ignore(int ...$statusCodes): self
-    {
-        $this->ignores = array_unique($statusCodes);
-
-        return $this;
-    }
-
-    /**
-     * Checks whether an index exists.
-     *
-     * @return bool
-     */
-    public function exists(): bool
-    {
-        return $this
-            ->getConnection()
-            ->getClient()
-            ->indices()
-            ->exists([
-                'index' => $this->name,
-            ]);
     }
 
     /**
@@ -318,6 +290,49 @@ class Index
     }
 
     /**
+     * Checks whether an index exists.
+     *
+     * @return bool
+     */
+    public function exists(): bool
+    {
+        return $this
+            ->getConnection()
+            ->getClient()
+            ->indices()
+            ->exists([
+                'index' => $this->name,
+            ]);
+    }
+
+    /**
+     * Alias to the {@see Index::ignores()} method.
+     *
+     * @param int ...$statusCodes
+     *
+     * @return $this
+     */
+    #[Deprecated(replacement: '%class%->ignores(%parametersList%)')]
+    public function ignore(int ...$statusCodes): self
+    {
+        return $this->ignores(...$statusCodes);
+    }
+
+    /**
+     * Configures the client to ignore bad HTTP requests.
+     *
+     * @param int ...$statusCodes HTTP Status codes to ignore.
+     *
+     * @return $this
+     */
+    public function ignores(int ...$statusCodes): self
+    {
+        $this->ignores = array_unique($statusCodes);
+
+        return $this;
+    }
+
+    /**
      * Sets the fields mappings.
      *
      * @param array $mappings
@@ -332,37 +347,42 @@ class Index
     }
 
     /**
-     * Retrieves the Elasticsearch  client instance.
+     * The number of replicas each primary shard has. Defaults to `1`.
      *
-     * @return Client
-     * @internal
+     * @param int $replicas Number of replicas to configure.
+     *
+     * @return $this
+     * @see https://www.elastic.co/guide/en/elasticsearch/reference/master/index-modules.html#index-number-of-replicas
      */
-    public function getClient(): Client
+    public function replicas(int $replicas): self
     {
-        return $this->getConnection()->getClient();
+        $this->replicas = $replicas;
+
+        return $this;
     }
 
     /**
-     * Retrieves the active connection.
+     * The number of primary shards that an index should have. Defaults to `1`.
+     * This setting can only be set at index creation time. It cannot be changed
+     * on a closed index.
      *
-     * @return ConnectionInterface
-     * @internal
+     * The number of shards are limited to 1024 per index. This limitation is a
+     * safety limit to prevent accidental creation of indices that can
+     * destabilize a cluster due to resource allocation. The limit can be
+     * modified by specifying
+     * `export ES_JAVA_OPTS="-Des.index.max_number_of_shards=128"` system
+     * property on every node that is part of the cluster.
+     *
+     * @param int $shards Number of shards to configure.
+     *
+     * @return $this
+     * @see https://www.elastic.co/guide/en/elasticsearch/reference/master/index-modules.html#index-number-of-shards
      */
-    public function getConnection(): ConnectionInterface
+    public function shards(int $shards): self
     {
-        return $this->connection;
-    }
+        $this->shards = $shards;
 
-    /**
-     * Sets the active connection on the index.
-     *
-     * @param ConnectionInterface $connection
-     *
-     * @internal
-     */
-    public function setConnection(ConnectionInterface $connection): void
-    {
-        $this->connection = $connection;
+        return $this;
     }
 }
 

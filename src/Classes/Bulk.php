@@ -1,7 +1,10 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Matchory\Elasticsearch\Classes;
 
+use JetBrains\PhpStorm\Deprecated;
 use Matchory\Elasticsearch\Query;
 
 /**
@@ -12,13 +15,6 @@ use Matchory\Elasticsearch\Query;
 class Bulk
 {
     /**
-     * The query object
-     *
-     * @var Query
-     */
-    public $query;
-
-    /**
      * The document key
      *
      * @var string|null
@@ -26,18 +22,11 @@ class Bulk
     public $_id;
 
     /**
-     * The index name
+     * Operation count which will trigger autocommit
      *
-     * @var string|null
+     * @var int
      */
-    public $index;
-
-    /**
-     * The type name
-     *
-     * @var string|null
-     */
-    public $type;
+    public $autocommitAfter = 0;
 
     /**
      * Bulk body
@@ -47,6 +36,13 @@ class Bulk
     public $body = [];
 
     /**
+     * The index name
+     *
+     * @var string|null
+     */
+    public $index;
+
+    /**
      * Number of pending operations
      *
      * @var int
@@ -54,11 +50,18 @@ class Bulk
     public $operationCount = 0;
 
     /**
-     * Operation count which will trigger autocommit
+     * The query object
      *
-     * @var int
+     * @var Query
      */
-    public $autocommitAfter = 0;
+    public $query;
+
+    /**
+     * The type name
+     *
+     * @var string|null
+     */
+    public $type;
 
     /**
      * @param Query    $query
@@ -69,34 +72,6 @@ class Bulk
         $this->query = $query;
 
         $this->autocommitAfter = (int)$autocommitAfter;
-    }
-
-    /**
-     * Set the index name
-     *
-     * @param string|null $index
-     *
-     * @return $this
-     */
-    public function index(?string $index = null): self
-    {
-        $this->index = $index;
-
-        return $this;
-    }
-
-    /**
-     * Set the type name
-     *
-     * @param string|null $type
-     *
-     * @return $this
-     */
-    public function type(?string $type = null): self
-    {
-        $this->type = $type;
-
-        return $this;
     }
 
     /**
@@ -114,52 +89,6 @@ class Bulk
     }
 
     /**
-     * Just an alias for _id() method
-     *
-     * @param string|null $_id
-     *
-     * @return $this
-     */
-    public function id(?string $_id = null): self
-    {
-        return $this->_id($_id);
-    }
-
-    /**
-     * Add pending document for insert
-     *
-     * @param array $data
-     *
-     * @return bool
-     */
-    public function insert(array $data = []): bool
-    {
-        return $this->action('index', $data);
-    }
-
-    /**
-     * Add pending document for update
-     *
-     * @param array $data
-     *
-     * @return bool
-     */
-    public function update(array $data = []): bool
-    {
-        return $this->action('update', $data);
-    }
-
-    /**
-     * Add pending document for deletion
-     *
-     * @return bool
-     */
-    public function delete(): bool
-    {
-        return $this->action('delete');
-    }
-
-    /**
      * Add pending document abstract action
      *
      * @param string $actionType
@@ -169,7 +98,7 @@ class Bulk
      */
     public function action(string $actionType, array $data = []): bool
     {
-        $this->body["body"][] = [
+        $this->body['body'][] = [
             $actionType => [
                 '_index' => $this->getIndex(),
                 '_type' => $this->getType(),
@@ -178,8 +107,8 @@ class Bulk
         ];
 
         if ( ! empty($data)) {
-            $this->body["body"][] = $actionType === "update"
-                ? ["doc" => $data]
+            $this->body['body'][] = $actionType === 'update'
+                ? ['doc' => $data]
                 : $data;
         }
 
@@ -208,17 +137,6 @@ class Bulk
     }
 
     /**
-     * Reset names
-     *
-     * @return void
-     */
-    public function reset(): void
-    {
-        $this->index();
-        $this->type();
-    }
-
-    /**
      * Commit all pending operations
      *
      * @return array|null
@@ -242,6 +160,91 @@ class Bulk
     }
 
     /**
+     * Add pending document for deletion
+     *
+     * @return bool
+     */
+    public function delete(): bool
+    {
+        return $this->action('delete');
+    }
+
+    /**
+     * Just an alias for _id() method
+     *
+     * @param string|null $_id
+     *
+     * @return $this
+     */
+    public function id(?string $_id = null): self
+    {
+        return $this->_id($_id);
+    }
+
+    /**
+     * Set the index name
+     *
+     * @param string|null $index
+     *
+     * @return $this
+     */
+    public function index(?string $index = null): self
+    {
+        $this->index = $index;
+
+        return $this;
+    }
+
+    /**
+     * Add pending document for insert
+     *
+     * @param array $data
+     *
+     * @return bool
+     */
+    public function insert(array $data = []): bool
+    {
+        return $this->action('index', $data);
+    }
+
+    /**
+     * Reset names
+     *
+     * @return void
+     */
+    public function reset(): void
+    {
+        $this->index();
+        $this->type();
+    }
+
+    /**
+     * Set the type name
+     *
+     * @param string|null $type
+     *
+     * @return $this
+     */
+    public function type(?string $type = null): self
+    {
+        $this->type = $type;
+
+        return $this;
+    }
+
+    /**
+     * Add pending document for update
+     *
+     * @param array $data
+     *
+     * @return bool
+     */
+    public function update(array $data = []): bool
+    {
+        return $this->action('update', $data);
+    }
+
+    /**
      * Get the index name
      *
      * @return string|null
@@ -255,9 +258,10 @@ class Bulk
      * Get the type name
      *
      * @return string|null
-     * @deprecated Mapping types are deprecated as of Elasticsearch 6.0.0
+     * @deprecated Mapping types are deprecated as of Elasticsearch 7.0.0
      * @see        https://www.elastic.co/guide/en/elasticsearch/reference/7.10/removal-of-types.html
      */
+    #[Deprecated(reason: 'Mapping types are deprecated as of Elasticsearch 7.0.0')]
     protected function getType(): ?string
     {
         return $this->type ?: $this->query->getType();

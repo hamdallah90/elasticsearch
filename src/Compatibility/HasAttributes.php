@@ -31,6 +31,7 @@ use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\Date;
 use Illuminate\Support\Str;
 use InvalidArgumentException;
+use JetBrains\PhpStorm\Deprecated;
 use JsonException;
 use LogicException;
 use Matchory\Elasticsearch\Compatibility\Exceptions\InvalidCastException;
@@ -176,12 +177,13 @@ trait HasAttributes
     protected $classCastCache = [];
 
     /**
-     * The attributes that should be mutated to dates.
+     * The attributes that should be mutated to date objects.
      *
      * @deprecated Use the "casts" property
      *
      * @var array
      */
+    #[Deprecated(replacement: '%class%->casts')]
     protected $dates = [];
 
     /**

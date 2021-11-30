@@ -11,6 +11,7 @@ use Illuminate\Contracts\Support\Arrayable;
 use Illuminate\Contracts\Support\Jsonable;
 use Illuminate\Support\Traits\ForwardsCalls;
 use IteratorAggregate;
+use JetBrains\PhpStorm\Deprecated;
 use JsonException;
 use JsonSerializable;
 use Matchory\Elasticsearch\Concerns\AppliesScopes;
@@ -43,8 +44,6 @@ class Query implements Arrayable, JsonSerializable, Jsonable, IteratorAggregate
     use ManagesIndices;
     use ExplainsQueries;
 
-    public const FIELD_AGGS = 'aggs';
-
     public const DEFAULT_CACHE_PREFIX = 'es';
 
     public const DEFAULT_LIMIT = 10;
@@ -54,6 +53,8 @@ class Query implements Arrayable, JsonSerializable, Jsonable, IteratorAggregate
     public const EQ = self::OPERATOR_EQUAL;
 
     public const EXISTS = self::OPERATOR_EXISTS;
+
+    public const FIELD_AGGS = 'aggs';
 
     protected const FIELD_HIGHLIGHT = '_highlight';
 
@@ -93,16 +94,6 @@ class Query implements Arrayable, JsonSerializable, Jsonable, IteratorAggregate
 
     public const OPERATOR_GREATER_THAN = '>';
 
-    public const REGEXP_FLAG_ALL = 1;
-
-    public const REGEXP_FLAG_COMPLEMENT = 2;
-
-    public const REGEXP_FLAG_INTERVAL = 4;
-
-    public const REGEXP_FLAG_INTERSECTION = 8;
-
-    public const REGEXP_FLAG_ANYSTRING = 16;
-
     public const OPERATOR_GREATER_THAN_OR_EQUAL = '>=';
 
     public const OPERATOR_LIKE = 'like';
@@ -133,6 +124,16 @@ class Query implements Arrayable, JsonSerializable, Jsonable, IteratorAggregate
 
     public const PARAM_TYPE = 'type';
 
+    public const REGEXP_FLAG_ALL = 1;
+
+    public const REGEXP_FLAG_ANYSTRING = 16;
+
+    public const REGEXP_FLAG_COMPLEMENT = 2;
+
+    public const REGEXP_FLAG_INTERSECTION = 8;
+
+    public const REGEXP_FLAG_INTERVAL = 4;
+
     public const SOURCE_EXCLUDES = 'excludes';
 
     public const SOURCE_INCLUDES = 'includes';
@@ -148,6 +149,7 @@ class Query implements Arrayable, JsonSerializable, Jsonable, IteratorAggregate
      * @see        ConnectionInterface::getClient()
      * @see        Query::getConnection()
      */
+    #[Deprecated(replacement: '%class%->getConnection()->getClient()')]
     public $client = null;
 
     /**
@@ -157,6 +159,7 @@ class Query implements Arrayable, JsonSerializable, Jsonable, IteratorAggregate
      * @deprecated Use getModel() instead
      * @see        Query::getModel()
      */
+    #[Deprecated(replacement: '%class%->getModel()')]
     public $model;
 
     /**
@@ -186,20 +189,6 @@ class Query implements Arrayable, JsonSerializable, Jsonable, IteratorAggregate
     }
 
     /**
-     * Retrieves the underlying Elasticsearch client instance. This can be used
-     * to work with the Elasticsearch library directly. You should check out its
-     * documentation for more information.
-     *
-     * @return Client Elasticsearch Client instance.
-     * @see https://www.elastic.co/guide/en/elasticsearch/client/php-api/current/overview.html
-     * @see Client
-     */
-    public function raw(): Client
-    {
-        return $this->getConnection()->getClient();
-    }
-
-    /**
      * Retrieves the underlying Elasticsearch connection.
      *
      * @return ConnectionInterface Connection instance.
@@ -212,28 +201,14 @@ class Query implements Arrayable, JsonSerializable, Jsonable, IteratorAggregate
     }
 
     /**
-     * Converts the fluent query into an Elasticsearch query array that can be
-     * converted into JSON.
+     * Proxies to the collection iterator, allowing to iterate the query builder
+     * directly as though it were a result collection.
      *
      * @inheritDoc
      */
-    final public function toArray(): array
+    final public function getIterator(): ArrayIterator
     {
-        return $this->buildQuery();
-    }
-
-    /**
-     * Converts the query to a JSON string.
-     *
-     * @inheritDoc
-     * @throws JsonException
-     */
-    public function toJson($options = 0): string
-    {
-        return json_encode(
-            $this->jsonSerialize(),
-            JSON_THROW_ON_ERROR | $options
-        );
+        return $this->get()->getIterator();
     }
 
     /**
@@ -297,14 +272,42 @@ class Query implements Arrayable, JsonSerializable, Jsonable, IteratorAggregate
     }
 
     /**
-     * Proxies to the collection iterator, allowing to iterate the query builder
-     * directly as though it were a result collection.
+     * Retrieves the underlying Elasticsearch client instance. This can be used
+     * to work with the Elasticsearch library directly. You should check out its
+     * documentation for more information.
+     *
+     * @return Client Elasticsearch Client instance.
+     * @see https://www.elastic.co/guide/en/elasticsearch/client/php-api/current/overview.html
+     * @see Client
+     */
+    public function raw(): Client
+    {
+        return $this->getConnection()->getClient();
+    }
+
+    /**
+     * Converts the fluent query into an Elasticsearch query array that can be
+     * converted into JSON.
      *
      * @inheritDoc
      */
-    final public function getIterator(): ArrayIterator
+    final public function toArray(): array
     {
-        return $this->get()->getIterator();
+        return $this->buildQuery();
+    }
+
+    /**
+     * Converts the query to a JSON string.
+     *
+     * @inheritDoc
+     * @throws JsonException
+     */
+    public function toJson($options = 0): string
+    {
+        return json_encode(
+            $this->jsonSerialize(),
+            JSON_THROW_ON_ERROR | $options
+        );
     }
 
     /**
@@ -317,30 +320,30 @@ class Query implements Arrayable, JsonSerializable, Jsonable, IteratorAggregate
         $query = $this->applyScopes();
 
         $params = [
-            self::PARAM_BODY => $this->getBody(),
-            self::PARAM_FROM => $this->getSkip(),
-            self::PARAM_SIZE => $this->getSize(),
+            self::PARAM_BODY => $query->getBody(),
+            self::PARAM_FROM => $query->getSkip(),
+            self::PARAM_SIZE => $query->getSize(),
         ];
 
-        if (count($this->getIgnores())) {
+        if (count($query->getIgnores())) {
             $params[self::PARAM_CLIENT] = [
-                self::PARAM_CLIENT_IGNORE => $this->ignores,
+                self::PARAM_CLIENT_IGNORE => $query->ignores,
             ];
         }
 
-        if ($searchType = $this->getSearchType()) {
+        if ($searchType = $query->getSearchType()) {
             $params[self::PARAM_SEARCH_TYPE] = $searchType;
         }
 
-        if ($scroll = $this->getScroll()) {
+        if ($scroll = $query->getScroll()) {
             $params[self::PARAM_SCROLL] = $scroll;
         }
 
-        if ($index = $this->getIndex()) {
+        if ($index = $query->getIndex()) {
             $params[self::PARAM_INDEX] = $index;
         }
 
-        if ($type = $this->getType()) {
+        if ($type = $query->getType()) {
             $params[self::PARAM_TYPE] = $type;
         }
 

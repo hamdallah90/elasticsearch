@@ -31,6 +31,32 @@ trait HasGlobalScopes
     protected static $globalScopes = [];
 
     /**
+     * Get a global scope registered with the model.
+     *
+     * @param ScopeInterface|string $scope
+     *
+     * @return ScopeInterface|Closure|null
+     */
+    public static function getGlobalScope($scope)
+    {
+        if (is_string($scope)) {
+            return static::$globalScopes[static::class][$scope] ?? null;
+        }
+
+        return static::$globalScopes[static::class][get_class($scope)] ?? null;
+    }
+
+    /**
+     * Get the global scopes for this class instance.
+     *
+     * @return array<string, Closure|ScopeInterface>
+     */
+    public function getGlobalScopes(): array
+    {
+        return static::$globalScopes[static::class] ?? [];
+    }
+
+    /**
      * Register a new global scope on the model.
      *
      * @param ScopeInterface|Closure|string $scope
@@ -71,31 +97,5 @@ trait HasGlobalScopes
     public static function hasGlobalScope($scope): bool
     {
         return (bool)static::getGlobalScope($scope);
-    }
-
-    /**
-     * Get a global scope registered with the model.
-     *
-     * @param ScopeInterface|string $scope
-     *
-     * @return ScopeInterface|Closure|null
-     */
-    public static function getGlobalScope($scope)
-    {
-        if (is_string($scope)) {
-            return static::$globalScopes[static::class][$scope] ?? null;
-        }
-
-        return static::$globalScopes[static::class][get_class($scope)] ?? null;
-    }
-
-    /**
-     * Get the global scopes for this class instance.
-     *
-     * @return array<string, Closure|ScopeInterface>
-     */
-    public function getGlobalScopes(): array
-    {
-        return static::$globalScopes[static::class] ?? [];
     }
 }

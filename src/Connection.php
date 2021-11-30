@@ -14,6 +14,7 @@ use Illuminate\Support\Facades\App;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Traits\ForwardsCalls;
 use InvalidArgumentException;
+use JetBrains\PhpStorm\Deprecated;
 use Matchory\Elasticsearch\Interfaces\ClientFactoryInterface;
 use Matchory\Elasticsearch\Interfaces\ConnectionInterface;
 use Matchory\Elasticsearch\Interfaces\ConnectionResolverInterface as Resolver;
@@ -38,6 +39,7 @@ class Connection implements ConnectionInterface
      * @deprecated
      * @todo remove in next major version
      */
+    #[Deprecated]
     private static $resolver;
 
     /**
@@ -47,6 +49,7 @@ class Connection implements ConnectionInterface
      * @deprecated
      * @todo remove in next major version
      */
+    #[Deprecated]
     protected $clients = [];
 
     /**
@@ -101,6 +104,7 @@ class Connection implements ConnectionInterface
      * @todo         remove in next major version
      * @noinspection PhpDeprecationInspection
      */
+    #[Deprecated]
     public static function setConnectionResolver(Resolver $resolver): void
     {
         static::$resolver = $resolver;
@@ -117,6 +121,7 @@ class Connection implements ConnectionInterface
      *             will be removed in the next major version.
      * @see        ConnectionManager
      */
+    #[Deprecated(reason: 'Use the connection manager to create connections instead.')]
     public static function configureLogging(
         ClientBuilder $clientBuilder,
         array $config
@@ -154,6 +159,7 @@ class Connection implements ConnectionInterface
      *             will be removed in the next major version.
      * @see        ConnectionManager
      */
+    #[Deprecated(reason: 'Use the connection manager to create connections instead.')]
     public static function create($config): Query
     {
         $app = App::getFacadeApplication();
@@ -181,6 +187,7 @@ class Connection implements ConnectionInterface
      *             will be removed in the next major version.
      * @see        ConnectionManager
      */
+    #[Deprecated(reason: 'Use the connection manager to create connections instead.')]
     public function connection(string $name): Query
     {
         return $this->newQuery($name);
@@ -198,6 +205,7 @@ class Connection implements ConnectionInterface
      * @see          ConnectionManager
      * @noinspection PhpDeprecationInspection
      */
+    #[Deprecated(reason: 'Use the connection manager to create connections instead.')]
     public function isLoaded(string $name): bool
     {
         return (bool)static::$resolver->connection($name);

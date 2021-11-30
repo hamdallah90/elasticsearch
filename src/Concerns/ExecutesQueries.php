@@ -6,6 +6,7 @@ namespace Matchory\Elasticsearch\Concerns;
 
 use DateTime;
 use Illuminate\Support\Facades\Request;
+use JetBrains\PhpStorm\Deprecated;
 use JsonException;
 use Matchory\Elasticsearch\Classes\Bulk;
 use Matchory\Elasticsearch\Collection;
@@ -38,13 +39,6 @@ trait ExecutesQueries
     protected $cacheKey;
 
     /**
-     * The number of seconds to cache the query.
-     *
-     * @var DateTime|int|null
-     */
-    protected $cacheTtl;
-
-    /**
      * A cache prefix.
      *
      * @var string
@@ -52,73 +46,11 @@ trait ExecutesQueries
     protected $cachePrefix = Query::DEFAULT_CACHE_PREFIX;
 
     /**
-     * Set the cache prefix.
+     * The number of seconds to cache the query.
      *
-     * @param string $prefix
-     *
-     * @return $this
+     * @var DateTime|int|null
      */
-    public function cachePrefix(string $prefix): self
-    {
-        $this->cachePrefix = $prefix;
-
-        return $this;
-    }
-
-    /**
-     * Get a unique cache key for the complete query.
-     *
-     * @return string
-     */
-    public function getCacheKey(): string
-    {
-        $cacheKey = $this->cacheKey ?: $this->generateCacheKey();
-
-        return "{$this->cachePrefix}.{$cacheKey}";
-    }
-
-    /**
-     * Generate the unique cache key for the query.
-     *
-     * @return string
-     */
-    public function generateCacheKey(): string
-    {
-        try {
-            return md5($this->toJson());
-        } catch (JsonException $e) {
-            return md5(serialize($this));
-        }
-    }
-
-    /**
-     * Indicate that the query results should be cached.
-     *
-     * @param DateTime|int $ttl Cache TTL in seconds.
-     * @param string|null  $key Cache key to use. Will be generated
-     *                          automatically if omitted.
-     *
-     * @return $this
-     */
-    public function remember($ttl, ?string $key = null): self
-    {
-        $this->cacheTtl = $ttl;
-        $this->cacheKey = $key;
-
-        return $this;
-    }
-
-    /**
-     * Indicate that the query results should be cached forever.
-     *
-     * @param string|null $key
-     *
-     * @return $this
-     */
-    public function rememberForever(?string $key = null): self
-    {
-        return $this->remember(-1, $key);
-    }
+    protected $cacheTtl;
 
     /**
      * Get the collection of results
@@ -139,55 +71,68 @@ trait ExecutesQueries
     }
 
     /**
-     * Paginate collection of results
+     * Get a unique cache key for the complete query.
      *
-     * @param int      $perPage
-     * @param string   $pageName
-     * @param int|null $page
-     *
-     * @return Pagination
+     * @return string
      */
-    public function paginate(
-        int $perPage = 10,
-        string $pageName = 'page',
-        ?int $page = null
-    ): Pagination {
-        // Check if the request from PHP CLI
-        if (PHP_SAPI === 'cli') {
-            $this->take($perPage);
+    public function getCacheKey(): string
+    {
+        $cacheKey = $this->cacheKey ?: $this->generateCacheKey();
 
-            $page = $page ?: 1;
+        return "{$this->cachePrefix}.{$cacheKey}";
+    }
 
-            $this->skip(($page * $perPage) - $perPage);
+    /**
+     * Insert multiple documents at once.
+     *
+     * @param array|callable $data Dictionary of [id => data] pairs
+     *
+     * @return object
+     */
+    public function bulk($data): object
+    {
+        if (is_callable($data)) {
+            /** @var Query $this */
+            $bulk = new Bulk($this);
 
-            $collection = $this->get();
+            $data($bulk);
 
-            return new Pagination(
-                $collection,
-                $collection->getTotal() ?? 0,
-                $perPage,
-                $page
-            );
+            $params = $bulk->body();
+        } else {
+            $params = [];
+
+            foreach ($data as $key => $value) {
+                $params['body'][] = [
+
+                    'index' => [
+                        '_index' => $this->getIndex(),
+                        '_type' => $this->getType(),
+                        '_id' => $key,
+                    ],
+
+                ];
+
+                $params['body'][] = $value;
+            }
         }
 
-        $this->take($perPage);
-
-        $page = $page ?: Request::get($pageName, 1);
-
-        $this->skip(($page * $perPage) - $perPage);
-
-        $collection = $this->get();
-
-        return new Pagination(
-            $collection,
-            $collection->getTotal() ?? 0,
-            $perPage,
-            $page,
-            [
-                'path' => Request::url(),
-                'query' => Request::query(),
-            ]
+        return (object)$this->getConnection()->getClient()->bulk(
+            $params
         );
+    }
+
+    /**
+     * Set the cache prefix.
+     *
+     * @param string $prefix
+     *
+     * @return $this
+     */
+    public function cachePrefix(string $prefix): self
+    {
+        $this->cachePrefix = $prefix;
+
+        return $this;
     }
 
     /**
@@ -206,6 +151,69 @@ trait ExecutesQueries
                 'scroll_id' => $scrollId,
                 'client' => ['ignore' => $this->getIgnores()],
             ])
+        );
+    }
+
+    /**
+     * Get the count of result
+     *
+     * @return int
+     */
+    public function count(): int
+    {
+        $query = $this->toArray();
+
+        // Remove unsupported count query keys
+        unset(
+            $query[Query::PARAM_SIZE],
+            $query[Query::PARAM_FROM],
+            $query['body']['_source'],
+            $query['body']['sort']
+        );
+
+        return (int)$this
+                        ->getConnection()
+                        ->getClient()
+                        ->count($query)['count'];
+    }
+
+    /**
+     * Increment a document field
+     *
+     * @param string $field
+     * @param int    $count
+     *
+     * @return object
+     */
+    public function decrement(string $field, int $count = 1): object
+    {
+        return $this->script("ctx._source.{$field} -= params.count", [
+            'count' => $count,
+        ]);
+    }
+
+    /**
+     * Delete a document
+     *
+     * @param string|null $id
+     *
+     * @return object
+     */
+    public function delete(?string $id = null): object
+    {
+        if ($id) {
+            $this->id($id);
+        }
+
+        $parameters = [
+            'id' => $this->getId(),
+            'client' => ['ignore' => $this->getIgnores()],
+        ];
+
+        $parameters = $this->addBaseParams($parameters);
+
+        return (object)$this->getConnection()->getClient()->delete(
+            $parameters
         );
     }
 
@@ -276,6 +284,35 @@ trait ExecutesQueries
     }
 
     /**
+     * Generate the unique cache key for the query.
+     *
+     * @return string
+     */
+    public function generateCacheKey(): string
+    {
+        try {
+            return md5($this->toJson());
+        } catch (JsonException $e) {
+            return md5(serialize($this));
+        }
+    }
+
+    /**
+     * Increment a document field
+     *
+     * @param string $field
+     * @param int    $count
+     *
+     * @return object
+     */
+    public function increment(string $field, int $count = 1): object
+    {
+        return $this->script("ctx._source.{$field} += params.count", [
+            'count' => $count,
+        ]);
+    }
+
+    /**
      * Insert a document
      *
      * @param array       $attributes
@@ -308,186 +345,54 @@ trait ExecutesQueries
     }
 
     /**
-     * Update a document
+     * Paginate collection of results
      *
-     * @param array       $attributes
-     * @param string|null $id
+     * @param int      $perPage
+     * @param string   $pageName
+     * @param int|null $page
      *
-     * @return object
+     * @return Pagination
      */
-    public function update(array $attributes, $id = null): object
-    {
-        if ($id) {
-            $this->id($id);
+    public function paginate(
+        int $perPage = 10,
+        string $pageName = 'page',
+        ?int $page = null
+    ): Pagination {
+        // Check if the request from PHP CLI
+        if (PHP_SAPI === 'cli') {
+            $this->take($perPage);
+
+            $page = $page ?: 1;
+
+            $this->skip(($page * $perPage) - $perPage);
+
+            $collection = $this->get();
+
+            return new Pagination(
+                $collection,
+                $collection->getTotal() ?? 0,
+                $perPage,
+                $page
+            );
         }
 
-        unset(
-            $attributes[self::FIELD_HIGHLIGHT],
-            $attributes[self::FIELD_INDEX],
-            $attributes[self::FIELD_SCORE],
-            $attributes[self::FIELD_TYPE],
-            $attributes[self::FIELD_ID],
-        );
+        $this->take($perPage);
 
-        $parameters = [
-            'id' => $this->getId(),
-            'body' => [
-                'doc' => $attributes,
-            ],
-            'client' => [
-                'ignore' => $this->getIgnores(),
-            ],
-        ];
+        $page = $page ?: Request::get($pageName, 1);
 
-        $parameters = $this->addBaseParams($parameters);
+        $this->skip(($page * $perPage) - $perPage);
 
-        return (object)$this->getConnection()->getClient()->update(
-            $parameters
-        );
-    }
+        $collection = $this->get();
 
-    /**
-     * Delete a document
-     *
-     * @param string|null $id
-     *
-     * @return object
-     */
-    public function delete(?string $id = null): object
-    {
-        if ($id) {
-            $this->id($id);
-        }
-
-        $parameters = [
-            'id' => $this->getId(),
-            'client' => ['ignore' => $this->getIgnores()],
-        ];
-
-        $parameters = $this->addBaseParams($parameters);
-
-        return (object)$this->getConnection()->getClient()->delete(
-            $parameters
-        );
-    }
-
-    /**
-     * Get the count of result
-     *
-     * @return int
-     */
-    public function count(): int
-    {
-        $query = $this->toArray();
-
-        // Remove unsupported count query keys
-        unset(
-            $query[Query::PARAM_SIZE],
-            $query[Query::PARAM_FROM],
-            $query['body']['_source'],
-            $query['body']['sort']
-        );
-
-        return (int)$this
-                        ->getConnection()
-                        ->getClient()
-                        ->count($query)['count'];
-    }
-
-    /**
-     * Update by script
-     *
-     * @param mixed $script
-     * @param array $params
-     *
-     * @return object
-     */
-    public function script($script, array $params = []): object
-    {
-        $parameters = [
-            'id' => $this->getId(),
-            'body' => [
-                'script' => [
-                    'inline' => $script,
-                    'params' => $params,
-                ],
-            ],
-            'client' => ['ignore' => $this->getIgnores()],
-        ];
-
-        $parameters = $this->addBaseParams($parameters);
-
-        return (object)$this->getConnection()->getClient()->update(
-            $parameters
-        );
-    }
-
-    /**
-     * Increment a document field
-     *
-     * @param string $field
-     * @param int    $count
-     *
-     * @return object
-     */
-    public function increment(string $field, int $count = 1): object
-    {
-        return $this->script("ctx._source.{$field} += params.count", [
-            'count' => $count,
-        ]);
-    }
-
-    /**
-     * Increment a document field
-     *
-     * @param string $field
-     * @param int    $count
-     *
-     * @return object
-     */
-    public function decrement(string $field, int $count = 1): object
-    {
-        return $this->script("ctx._source.{$field} -= params.count", [
-            'count' => $count,
-        ]);
-    }
-
-    /**
-     * Insert multiple documents at once.
-     *
-     * @param array|callable $data Dictionary of [id => data] pairs
-     *
-     * @return object
-     */
-    public function bulk($data): object
-    {
-        if (is_callable($data)) {
-            /** @var Query $this */
-            $bulk = new Bulk($this);
-
-            $data($bulk);
-
-            $params = $bulk->body();
-        } else {
-            $params = [];
-
-            foreach ($data as $key => $value) {
-                $params['body'][] = [
-
-                    'index' => [
-                        '_index' => $this->getIndex(),
-                        '_type' => $this->getType(),
-                        '_id' => $key,
-                    ],
-
-                ];
-
-                $params['body'][] = $value;
-            }
-        }
-
-        return (object)$this->getConnection()->getClient()->bulk(
-            $params
+        return new Pagination(
+            $collection,
+            $collection->getTotal() ?? 0,
+            $perPage,
+            $page,
+            [
+                'path' => Request::url(),
+                'query' => Request::query(),
+            ]
         );
     }
 
@@ -541,9 +446,138 @@ trait ExecutesQueries
      * @deprecated Use toArray() instead
      * @see        Query::toArray()
      */
+    #[Deprecated(replacement: '%class%->toArray()')]
     public function query(): array
     {
         return $this->toArray();
+    }
+
+    /**
+     * Indicate that the query results should be cached.
+     *
+     * @param DateTime|int $ttl Cache TTL in seconds.
+     * @param string|null  $key Cache key to use. Will be generated
+     *                          automatically if omitted.
+     *
+     * @return $this
+     */
+    public function remember($ttl, ?string $key = null): self
+    {
+        $this->cacheTtl = $ttl;
+        $this->cacheKey = $key;
+
+        return $this;
+    }
+
+    /**
+     * Indicate that the query results should be cached forever.
+     *
+     * @param string|null $key
+     *
+     * @return $this
+     */
+    public function rememberForever(?string $key = null): self
+    {
+        return $this->remember(-1, $key);
+    }
+
+    /**
+     * Update by script
+     *
+     * @param mixed $script
+     * @param array $params
+     *
+     * @return object
+     */
+    public function script($script, array $params = []): object
+    {
+        $parameters = [
+            'id' => $this->getId(),
+            'body' => [
+                'script' => [
+                    'inline' => $script,
+                    'params' => $params,
+                ],
+            ],
+            'client' => ['ignore' => $this->getIgnores()],
+        ];
+
+        $parameters = $this->addBaseParams($parameters);
+
+        return (object)$this->getConnection()->getClient()->update(
+            $parameters
+        );
+    }
+
+    /**
+     * Update a document
+     *
+     * @param array           $attributes
+     * @param string|int|null $id
+     *
+     * @return object
+     */
+    public function update(array $attributes, $id = null): object
+    {
+        if ($id) {
+            $this->id($id);
+        }
+
+        unset(
+            $attributes[self::FIELD_HIGHLIGHT],
+            $attributes[self::FIELD_INDEX],
+            $attributes[self::FIELD_SCORE],
+            $attributes[self::FIELD_TYPE],
+            $attributes[self::FIELD_ID],
+        );
+
+        $parameters = [
+            'id' => $this->getId(),
+            'body' => [
+                'doc' => $attributes,
+            ],
+            'client' => [
+                'ignore' => $this->getIgnores(),
+            ],
+        ];
+
+        $parameters = $this->addBaseParams($parameters);
+
+        return (object)$this->getConnection()->getClient()->update(
+            $parameters
+        );
+    }
+
+    /**
+     * Processes a result and turns it into a model instance.
+     *
+     * @param array<string, mixed> $document Raw document to create a model
+     *                                       instance from
+     *
+     * @return Model Model instance representing the source document
+     */
+    protected function createModelInstance(array $document): Model
+    {
+        $data = $document[Query::FIELD_SOURCE] ?? [];
+        $metadata = array_diff_key($document, array_flip([
+            Query::FIELD_SOURCE,
+        ]));
+
+        return $this->getModel()->newInstance(
+            $data,
+            $metadata,
+            true,
+            $document[Query::FIELD_INDEX] ?? null,
+            $document[Query::FIELD_TYPE] ?? null,
+        );
+    }
+
+    /**
+     * @return CacheInterface|null
+     */
+    protected function getCache(): ?CacheInterface
+    {
+        return $this->getConnection()->getCache();
     }
 
     /**
@@ -552,6 +586,7 @@ trait ExecutesQueries
      * @param string|null $scrollId
      *
      * @return array|null
+     * @throws InvalidArgumentException
      */
     protected function getResult(?string $scrollId = null): ?array
     {
@@ -562,7 +597,7 @@ trait ExecutesQueries
         if ($cache = $this->getCache()) {
             try {
                 return $cache->get($this->getCacheKey());
-            } catch (Throwable | InvalidArgumentException $exception) {
+            } catch (Throwable|InvalidArgumentException $exception) {
                 // If the cache didn't like our cache key (which should be
                 // impossible), we regard it as a cache failure and perform a
                 // normal search instead.
@@ -570,14 +605,6 @@ trait ExecutesQueries
         }
 
         return $this->performSearch($scrollId);
-    }
-
-    /**
-     * @return CacheInterface|null
-     */
-    protected function getCache(): ?CacheInterface
-    {
-        return $this->getConnection()->getCache();
     }
 
     /**
@@ -620,30 +647,6 @@ trait ExecutesQueries
 
         return $this->createModelInstance(
             $response[Query::FIELD_HITS][Query::FIELD_NESTED_HITS][0]
-        );
-    }
-
-    /**
-     * Processes a result and turns it into a model instance.
-     *
-     * @param array<string, mixed> $document Raw document to create a model
-     *                                       instance from
-     *
-     * @return Model Model instance representing the source document
-     */
-    protected function createModelInstance(array $document): Model
-    {
-        $data = $document[Query::FIELD_SOURCE] ?? [];
-        $metadata = array_diff_key($document, array_flip([
-            Query::FIELD_SOURCE,
-        ]));
-
-        return $this->getModel()->newInstance(
-            $data,
-            $metadata,
-            true,
-            $document[Query::FIELD_INDEX] ?? null,
-            $document[Query::FIELD_TYPE] ?? null,
         );
     }
 
