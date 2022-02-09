@@ -923,10 +923,10 @@ trait BuildsFluentQueries
     {
         $fields = $this->flattenArgs($args);
 
-        $this->source[Query::SOURCE_INCLUDES] = array_unique(array_merge(
+        $this->source[Query::SOURCE_INCLUDES] = array_values(array_unique(array_merge(
             $this->source[Query::SOURCE_INCLUDES] ?? [],
             $fields
-        ));
+        )));
 
         $this->source[Query::SOURCE_EXCLUDES] = array_values(array_filter(
             $this->source[Query::SOURCE_EXCLUDES] ?? [], function ($field) {
@@ -1053,10 +1053,10 @@ trait BuildsFluentQueries
     {
         $fields = $this->flattenArgs($args);
 
-        $this->source[Query::SOURCE_EXCLUDES] = array_unique(array_merge(
+        $this->source[Query::SOURCE_EXCLUDES] = array_values(array_unique(array_merge(
             $this->source[Query::SOURCE_EXCLUDES] ?? [],
             $fields
-        ));
+        )));
 
         $this->source[Query::SOURCE_INCLUDES] = array_values(array_filter(
             $this->source[Query::SOURCE_INCLUDES] ?? [], function ($field) {
