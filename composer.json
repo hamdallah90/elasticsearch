@@ -79,6 +79,9 @@
         "sort-packages": true,
         "platform": {
             "php": "7.3.28"
+        },
+        "allow-plugins": {
+            "composer/package-versions-deprecated": true
         }
     },
     "replace": {
