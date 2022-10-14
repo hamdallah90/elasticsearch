@@ -6215,16 +6215,16 @@
         },
         {
             "name": "laravel/lumen-framework",
-            "version": "v9.1.0",
+            "version": "v9.1.3",
             "source": {
                 "type": "git",
                 "url": "https://github.com/laravel/lumen-framework.git",
-                "reference": "057328de7c8c748f3d7f5adfdfe0587ce9af95cc"
+                "reference": "624dfbdb2682ef1aa06a64fad247c3859a7f000e"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/laravel/lumen-framework/zipball/057328de7c8c748f3d7f5adfdfe0587ce9af95cc",
-                "reference": "057328de7c8c748f3d7f5adfdfe0587ce9af95cc",
+                "url": "https://api.github.com/repos/laravel/lumen-framework/zipball/624dfbdb2682ef1aa06a64fad247c3859a7f000e",
+                "reference": "624dfbdb2682ef1aa06a64fad247c3859a7f000e",
                 "shasum": ""
             },
             "require": {
@@ -6308,7 +6308,7 @@
                 "issues": "https://github.com/laravel/lumen-framework/issues",
                 "source": "https://github.com/laravel/lumen-framework"
             },
-            "time": "2022-08-02T14:58:44+00:00"
+            "time": "2022-10-11T17:33:31+00:00"
         },
         {
             "name": "laravel/scout",
