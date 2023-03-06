@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Matchory\Elasticsearch\Interfaces;
 
-use Elasticsearch\Client;
+use Elastic\Elasticsearch\Client;
 use Matchory\Elasticsearch\Builder;
 use Psr\SimpleCache\CacheInterface;
 

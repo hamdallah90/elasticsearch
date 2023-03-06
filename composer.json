@@ -1,5 +1,5 @@
 {
-    "name": "matchory/elasticsearch",
+    "name": "hamdallah90/elasticsearch",
     "description": "The missing elasticsearch ORM for Laravel!",
     "keywords": [
         "php",
@@ -50,7 +50,7 @@
     "require": {
         "php": ">=8.1",
         "ext-json": "*",
-        "elasticsearch/elasticsearch": "^8.1",
+        "elasticsearch/elasticsearch": "^8.5",
         "illuminate/pagination": "*",
         "illuminate/support": "*",
         "monolog/monolog": "*",

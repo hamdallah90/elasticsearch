@@ -1000,13 +1000,14 @@ trait ExecutesQueries
                 ->scroll([
                     'scroll' => $this->getScroll(),
                     'scroll_id' => $scrollId,
-                ]);
+                ])->asArray();
         } else {
             $query = $this->buildQuery();
             $result = $this
                 ->getConnection()
                 ->getClient()
-                ->search($query);
+                ->search($query)
+                ->asArray();
         }
 
         // We attempt to cache the results if we have a cache instance, and the

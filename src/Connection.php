@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Matchory\Elasticsearch;
 
 use BadMethodCallException;
-use Elasticsearch\Client;
+use Elastic\Elasticsearch\Client;
 use Illuminate\Support\Traits\ForwardsCalls;
 use Matchory\Elasticsearch\Interfaces\ConnectionInterface;
 use Psr\SimpleCache\CacheInterface;
