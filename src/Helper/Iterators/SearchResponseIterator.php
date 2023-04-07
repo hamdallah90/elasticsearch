@@ -128,7 +128,7 @@ class SearchResponseIterator implements Iterator
                     'scroll'    => $this->scroll_ttl
                 ]
             ]
-        );
+        )->asArray();
         $this->scroll_id = $this->current_scrolled_response['_scroll_id'];
         $this->current_key++;
     }
